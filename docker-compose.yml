@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # ---------------------------------
+  # Service 1: Frontend (Apache)
+  # ---------------------------------
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80" # Access website locally at http://localhost:8080
+    depends_on:
+      - backend
+
+  # ---------------------------------
+  # Service 2: Backend (Node.js)
+  # ---------------------------------
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000" # Access at http://localhost:3000
+    environment:
+      # Environment variables for the Node.js app
+      - DB_HOST=db
+      - DB_USER=myuser
+      - DB_PASSWORD=mypassword
+      - DB_NAME=mydb
+      - JWT_SECRET=your_super_secret_key_change_me
+    depends_on:
+      - db
+
+  # ---------------------------------
+  # Service 3: Database (PostgreSQL)
+  # ---------------------------------
+  db:
+    image: postgres:14-alpine
+    environment:
+      # Postgres credentials
+      - POSTGRES_USER=myuser
+      - POSTGRES_PASSWORD=mypassword
+      - POSTGRES_DB=mydb
+    volumes:
+      # This runs the .sql file on first startup to create your tables
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      # Persists data
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432" # So you can connect to the DB from your local machine (e.g., DBeaver)
+
+volumes:
+  pgdata: # This volume stores your database data
