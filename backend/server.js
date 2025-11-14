@@ -23,10 +23,10 @@ const pool = new Pool({
 
 // 1. Register a new user
 app.post('/register', async (req, res) => {
-  const { email, password } = req.body;
+  const { username, phone_number, email, password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required' });
+  if (!email || !password || !username) {
+    return res.status(400).json({ message: 'Email, Username, and password are required' });
   }
 
   try {
@@ -35,14 +35,15 @@ app.post('/register', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, salt);
 
     const newUser = await pool.query(
-      'INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING *',
-      [email, passwordHash]
+      'INSERT INTO users (username, email, phone_number, password_hash) VALUES ($1, $2) RETURNING *',
+      [username, email, phone_number, passwordHash]
     );
 
     res.status(201).json({
       message: 'User created successfully',
       user: {
         user_id: newUser.rows[0].user_id,
+        username: newUser.rows[0].username,
         email: newUser.rows[0].email,
       },
     });
@@ -50,6 +51,9 @@ app.post('/register', async (req, res) => {
     if (err.code === '23505') { // Unique constraint violation
       return res.status(400).json({ message: 'Email already exists' });
     }
+    if (err.constraint === 'users_username_key') {
+         return res.status(400).json({ message: 'Username already exists' });
+      }
     console.error(err.message);
     res.status(500).json({ message: 'Server error' });
   }
