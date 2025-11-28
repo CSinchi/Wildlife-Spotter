@@ -19,6 +19,68 @@ const pool = new Pool({
   port: 5432,
 });
 
+// --- Schema Migration ---
+async function initializeDatabase() {
+  const client = await pool.connect();
+  try {
+    console.log('Running database migrations...');
+
+    // 1. Ensure 'users' table exists (basic check)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        username VARCHAR(100) UNIQUE NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 2. Check for missing columns and add them
+    const checkColumn = async (tableName, columnName, columnDef) => {
+      const res = await client.query(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = $1 AND column_name = $2
+      `, [tableName, columnName]);
+
+      if (res.rows.length === 0) {
+        console.log(`Adding missing column '${columnName}' to '${tableName}'...`);
+        await client.query(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDef}`);
+      }
+    };
+
+    // Ensure 'user_id' exists (Primary Key)
+    // Note: If user_id is missing, we add it as SERIAL PRIMARY KEY.
+    await checkColumn('users', 'user_id', 'SERIAL PRIMARY KEY');
+
+    // Ensure 'phone_number' exists
+    await checkColumn('users', 'phone_number', 'VARCHAR(50) NULL');
+
+    // Ensure 'login_tokens' table exists
+    // We do this AFTER ensuring users.user_id exists, because of the foreign key
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS login_tokens (
+        token_id SERIAL PRIMARY KEY,
+        user_id INT NOT NULL,
+        token TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_user FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      );
+    `);
+
+    // Ensure index on token
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_token ON login_tokens(token);`);
+
+    console.log('Database migrations completed successfully.');
+
+  } catch (err) {
+    console.error('Migration failed:', err);
+    // We don't exit process, but requests might fail if DB is bad.
+  } finally {
+    client.release();
+  }
+}
+
 // --- API Endpoints ---
 
 // 1. Register a new user
@@ -100,6 +162,9 @@ app.post('/login', async (req, res) => {
 });
 
 // --- Start Server ---
-app.listen(port, () => {
-  console.log(`Backend server listening on port ${port}`);
+// Initialize DB then start listening
+initializeDatabase().then(() => {
+  app.listen(port, () => {
+    console.log(`Backend server listening on port ${port}`);
+  });
 });
