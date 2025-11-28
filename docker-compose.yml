@@ -41,10 +41,5 @@ services:
     volumes:
       # This runs the .sql file on first startup to create your tables
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
-      # Persists data
-      - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432" # So you can connect to the DB from your local machine (e.g., DBeaver)
-
-volumes:
-  pgdata: # This volume stores your database data
