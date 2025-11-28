@@ -1,5 +1,6 @@
 // Wait for the DOM to be fully loaded
 document.addEventListener('DOMContentLoaded', () => {
+  console.log('Script loaded.');
 
   const loginForm = document.getElementById('loginForm');
   const registerForm = document.getElementById('registerForm');
@@ -9,8 +10,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Handle Login ---
   if (loginForm) {
+    console.log('Login form found.');
     loginForm.addEventListener('submit', async (e) => {
       e.preventDefault(); // Prevent default form submission
+      console.log('Login submitting...');
       
       const email = document.getElementById('email').value;
       const password = document.getElementById('password').value;
@@ -33,16 +36,20 @@ document.addEventListener('DOMContentLoaded', () => {
           showMessage(`Error: ${data.message}`, 'danger');
         }
       } catch (err) {
+        console.error('Login error:', err);
         showMessage(`Error: ${err.message}`, 'danger');
       }
-  })};
+    });
+  }
 
   // --- Handle Registration ---
   if (registerForm) {
+    console.log('Register form found.');
     registerForm.addEventListener('submit', async (e) => {
       e.preventDefault();
+      console.log('Register submitting...');
       
-      // Get all 4 values from the registration form
+      // Get all values from the registration form
       const username = document.getElementById('username').value;
       const phone = document.getElementById('phone').value;
       const email = document.getElementById('email').value;
@@ -52,10 +59,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = await fetch(`${API_URL}/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          // Send the new fields to the backend
           body: JSON.stringify({
             username: username,
-            phone_number: phone, // Make sure backend expects 'phone_number'
+            phone_number: phone,
             email: email,
             password: password
           }),
@@ -73,6 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
           showMessage(`Error: ${data.message}`, 'danger');
         }
       } catch (err) {
+        console.error('Registration error:', err);
         showMessage(`Error: ${err.message}`, 'danger');
       }
     });
@@ -85,7 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
       messageEl.className = `card-footer alert alert-${type}`;
       messageEl.style.display = 'block';
     } else {
-      console.log('Message element not found, but that might be ok.');
+      console.log('Message element not found:', message);
     }
   }
 });
