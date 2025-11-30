@@ -24,7 +24,30 @@ const pool = new Pool({
 });
 
 // --- Schema Migration ---
+const waitForDb = async () => {
+  let retries = 5;
+  while (retries) {
+    try {
+      const client = await pool.connect();
+      client.release();
+      console.log('Database connected successfully');
+      return true;
+    } catch (err) {
+      console.log(`Database not ready, retrying in 5s... (${retries} left)`);
+      retries -= 1;
+      await new Promise(res => setTimeout(res, 5000));
+    }
+  }
+  return false;
+};
+
 async function initializeDatabase() {
+  if (!(await waitForDb())) {
+    console.error('Could not connect to database after multiple retries.');
+    // We exit here to let Docker restart the container, which is often better than hanging
+    process.exit(1);
+  }
+
   const client = await pool.connect();
   try {
     console.log('Running database migrations...');
