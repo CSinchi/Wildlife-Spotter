@@ -24,3 +24,24 @@ CREATE TABLE IF NOT EXISTS login_tokens (
 
 -- Add an index for faster token lookups
 CREATE INDEX IF NOT EXISTS idx_token ON login_tokens(token);
+
+-- Create the sightings table
+CREATE TABLE IF NOT EXISTS sightings (
+    sighting_id SERIAL PRIMARY KEY,
+    user_id INT NOT NULL,
+    species_name VARCHAR(255) NOT NULL,
+    latitude DECIMAL(9, 6) NOT NULL,
+    longitude DECIMAL(9, 6) NOT NULL,
+    sighting_notes TEXT,
+    sighting_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    photo_url TEXT,
+    verification_status VARCHAR(50) DEFAULT 'unverified',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_sighting_user
+        FOREIGN KEY(user_id)
+        REFERENCES users(user_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_sighting_location ON sightings(latitude, longitude);
