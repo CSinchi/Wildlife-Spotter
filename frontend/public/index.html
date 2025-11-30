@@ -10,6 +10,30 @@
   <style>
       #map { height: 600px; width: 100%; }
       .popup-img { max-width: 200px; height: auto; display: block; margin-top: 5px; }
+      #searchSuggestions {
+          position: absolute;
+          top: 100%;
+          left: 0;
+          right: 0;
+          z-index: 1000;
+          background: white;
+          border: 1px solid #ccc;
+          border-top: none;
+          max-height: 200px;
+          overflow-y: auto;
+          display: none;
+      }
+      .search-suggestion-item {
+          padding: 10px;
+          cursor: pointer;
+          border-bottom: 1px solid #eee;
+      }
+      .search-suggestion-item:hover {
+          background-color: #f8f9fa;
+      }
+      .search-container {
+          position: relative;
+      }
   </style>
 </head>
 <body>
@@ -38,13 +62,14 @@
   <div class="container-fluid my-3">
     <div class="row mb-3">
         <div class="col-md-8 offset-md-2">
-            <div class="input-group">
+            <div class="input-group search-container">
                 <select class="form-select" id="searchType" style="max-width: 150px;">
                     <option value="location">Location</option>
                     <option value="species">Species</option>
                 </select>
-                <input type="text" class="form-control" id="searchInput" placeholder="Search for a location...">
+                <input type="text" class="form-control" id="searchInput" placeholder="Search for a location..." autocomplete="off">
                 <button class="btn btn-primary" type="button" id="searchBtn">Search</button>
+                <div id="searchSuggestions"></div>
             </div>
         </div>
     </div>

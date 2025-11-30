@@ -154,23 +154,98 @@ document.addEventListener('DOMContentLoaded', () => {
       const searchInput = document.getElementById('searchInput');
       const searchBtn = document.getElementById('searchBtn');
       const searchType = document.getElementById('searchType');
+      const searchSuggestions = document.getElementById('searchSuggestions');
       let allSightings = [];
       let markersLayer = L.layerGroup().addTo(map);
+
+      // Helper: Debounce
+      function debounce(func, wait) {
+          let timeout;
+          return function(...args) {
+              clearTimeout(timeout);
+              timeout = setTimeout(() => func.apply(this, args), wait);
+          };
+      }
+
+      // Helper: Show Suggestions
+      function showSuggestions(items, onSelect) {
+          searchSuggestions.innerHTML = '';
+          if (items.length === 0) {
+              searchSuggestions.style.display = 'none';
+              return;
+          }
+          items.forEach(item => {
+              const div = document.createElement('div');
+              div.className = 'search-suggestion-item';
+              div.textContent = item.label;
+              div.addEventListener('click', () => {
+                  searchInput.value = item.label; // Fill input
+                  searchSuggestions.style.display = 'none';
+                  onSelect(item.data);
+              });
+              searchSuggestions.appendChild(div);
+          });
+          searchSuggestions.style.display = 'block';
+      }
+
+      // Hide suggestions on outside click
+      document.addEventListener('click', (e) => {
+          if (searchSuggestions && !searchInput.contains(e.target) && !searchSuggestions.contains(e.target)) {
+              searchSuggestions.style.display = 'none';
+          }
+      });
 
       // Change placeholder based on type
       if (searchType) {
           searchType.addEventListener('change', () => {
               searchInput.placeholder = searchType.value === 'location' ? 'Search for a location...' : 'Search for a species...';
+              if (searchSuggestions) searchSuggestions.style.display = 'none';
+              searchInput.value = '';
           });
       }
 
+      // Input Event for Autocomplete
+      if (searchInput) {
+          searchInput.addEventListener('input', debounce(async (e) => {
+              const query = e.target.value.trim();
+              if (query.length < 3) {
+                  if (searchSuggestions) searchSuggestions.style.display = 'none';
+                  return;
+              }
+
+              if (searchType.value === 'location') {
+                  try {
+                      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`);
+                      const data = await res.json();
+                      const items = data.map(place => ({
+                          label: place.display_name,
+                          data: { lat: parseFloat(place.lat), lon: parseFloat(place.lon) }
+                      }));
+                      showSuggestions(items, (loc) => {
+                          map.setView([loc.lat, loc.lon], 12);
+                      });
+                  } catch (err) { console.error(err); }
+              } else {
+                  // Species Autocomplete (from local loaded data)
+                  // Use Set to get unique names
+                  const uniqueSpecies = [...new Set(allSightings.map(s => s.species_name))];
+                  const matches = uniqueSpecies.filter(name => name.toLowerCase().includes(query.toLowerCase()));
+                  const items = matches.map(name => ({ label: name, data: name }));
+                  showSuggestions(items, (name) => {
+                       renderMarkers(allSightings.filter(s => s.species_name === name));
+                  });
+              }
+          }, 300));
+      }
+
+      // Search Button Click (Manual trigger)
       if (searchBtn) {
           searchBtn.addEventListener('click', async () => {
               const query = searchInput.value.trim();
               if (!query) return;
 
               if (searchType.value === 'location') {
-                  // Geocode location using Nominatim (OpenStreetMap)
+                  // Fallback to basic search if no suggestion clicked
                   try {
                       const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
                       const data = await res.json();
