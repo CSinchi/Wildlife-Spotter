@@ -146,11 +146,17 @@ async function initializeDatabase() {
         species_name VARCHAR(255) UNIQUE NOT NULL,
         description TEXT,
         habitat TEXT,
-        fun_facts TEXT,
+        scientific_name VARCHAR(255),
+        diet VARCHAR(255),
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT fk_entry_user FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
       );
     `);
+
+    // Ensure columns exist (if table already existed)
+    await checkColumn('species_entries', 'scientific_name', 'VARCHAR(255)');
+    await checkColumn('species_entries', 'diet', 'VARCHAR(255)');
+    // We don't remove fun_facts column to avoid data loss, but we won't use it.
 
     console.log('Database migrations completed successfully.');
 
@@ -339,14 +345,26 @@ app.post('/api/sightings', authenticateToken, upload.single('photo'), async (req
     return res.status(400).json({ message: 'Species, latitude, and longitude are required.' });
   }
 
-  // Validate Species
+  // Validate Species (API Ninjas OR User Entries)
   try {
      const speciesRes = await axios.get('https://api.api-ninjas.com/v1/animals', {
       params: { name: species_name },
       headers: { 'X-Api-Key': process.env.API_NINJAS_KEY }
     });
-    if (!speciesRes.data || speciesRes.data.length === 0) {
-        return res.status(400).json({ message: `Species '${species_name}' not found. Please select a valid species.` });
+
+    let isValid = false;
+    if (speciesRes.data && speciesRes.data.length > 0) {
+        isValid = true;
+    } else {
+        // Check local DB for verified user entry (assuming existence = verification per requirements)
+        const userEntryRes = await pool.query('SELECT * FROM species_entries WHERE species_name ILIKE $1', [species_name]);
+        if (userEntryRes.rows.length > 0) {
+            isValid = true;
+        }
+    }
+
+    if (!isValid) {
+        return res.status(400).json({ message: `Species '${species_name}' not found in official records or community database.` });
     }
   } catch (err) {
       console.error("Species validation error:", err.message);
@@ -377,7 +395,7 @@ app.post('/api/sightings', authenticateToken, upload.single('photo'), async (req
 
 // 5. Get Sightings (Geospatial)
 app.get('/api/sightings', async (req, res) => {
-    const { lat, lon, radius, region } = req.query; // Radius in km
+    const { lat, lon, radius, region, species_name } = req.query; // Radius in km
 
     try {
         let query = 'SELECT * FROM sightings';
@@ -404,6 +422,12 @@ app.get('/api/sightings', async (req, res) => {
         if (region) {
             whereClauses.push(`region = $${paramIndex}`);
             params.push(region);
+            paramIndex++;
+        }
+
+        if (species_name) {
+            whereClauses.push(`species_name ILIKE $${paramIndex}`);
+            params.push(species_name);
             paramIndex++;
         }
 
@@ -572,7 +596,7 @@ app.delete('/api/preferences/:id', authenticateToken, async (req, res) => {
 
 // 13. Submit User Species Entry
 app.post('/api/species_entries', authenticateToken, async (req, res) => {
-    const { species_name, description, habitat, fun_facts } = req.body;
+    const { species_name, description, habitat, scientific_name, diet } = req.body;
 
     if (!species_name) {
         return res.status(400).json({ message: 'Species name is required.' });
@@ -586,8 +610,6 @@ app.post('/api/species_entries', authenticateToken, async (req, res) => {
         });
 
         // Exact match check to prevent entries if official data exists
-        // API Ninjas fuzzy matches, so we need to be careful.
-        // If API returns data, iterate and check for case-insensitive exact match
         if (apiRes.data && apiRes.data.length > 0) {
              const exactMatch = apiRes.data.find(animal => animal.name.toLowerCase() === species_name.toLowerCase());
              if (exactMatch) {
@@ -597,8 +619,8 @@ app.post('/api/species_entries', authenticateToken, async (req, res) => {
 
         // 2. Insert into DB (Unique constraint handles duplicate user entries)
         const result = await pool.query(
-            'INSERT INTO species_entries (user_id, species_name, description, habitat, fun_facts) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-            [req.user.userId, species_name, description, habitat, fun_facts]
+            'INSERT INTO species_entries (user_id, species_name, description, habitat, scientific_name, diet) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+            [req.user.userId, species_name, description, habitat, scientific_name, diet]
         );
 
         res.status(201).json(result.rows[0]);
@@ -667,8 +689,9 @@ app.get('/api/species_search', async (req, res) => {
                 name: item.species_name,
                 description: item.description,
                 habitat: item.habitat,
-                fun_facts: item.fun_facts,
-                user_id: item.user_id // Maybe fetch username if needed?
+                scientific_name: item.scientific_name,
+                diet: item.diet,
+                user_id: item.user_id
             }));
             results = results.concat(dbResults);
         }
@@ -696,8 +719,9 @@ app.get('/api/location_info', async (req, res) => {
         // But we rely on OpenSearch to disambiguate.
 
         // 2. OpenSearch for Disambiguation/Discovery
+        const headers = { 'User-Agent': 'WildlifeSpotter/1.0 (internal-project)' };
         const openSearchUrl = `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(searchTerm)}&limit=5&namespace=0&format=json`;
-        const openRes = await axios.get(openSearchUrl);
+        const openRes = await axios.get(openSearchUrl, { headers });
         // Response format: [query, [titles], [descriptions], [urls]]
 
         const titles = openRes.data[1];
@@ -707,7 +731,7 @@ app.get('/api/location_info', async (req, res) => {
             // Try appending "National Park" if not present
              if (!searchTerm.toLowerCase().includes('park') && !searchTerm.toLowerCase().includes('reserve')) {
                  const retryTerm = searchTerm + ' National Park';
-                 const retryRes = await axios.get(`https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(retryTerm)}&limit=5&namespace=0&format=json`);
+                 const retryRes = await axios.get(`https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(retryTerm)}&limit=5&namespace=0&format=json`, { headers });
                  if (retryRes.data[1] && retryRes.data[1].length > 0) {
                      // Found results with appended keyword
                      // Return these as suggestions
@@ -744,7 +768,7 @@ app.get('/api/location_info', async (req, res) => {
         }
 
         // 3. Fetch Summary for the target title
-        const summaryRes = await axios.get(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(targetTitle)}`);
+        const summaryRes = await axios.get(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(targetTitle)}`, { headers });
 
          if (summaryRes.data) {
              res.json({

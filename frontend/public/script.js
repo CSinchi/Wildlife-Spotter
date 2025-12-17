@@ -353,7 +353,18 @@ document.addEventListener('DOMContentLoaded', () => {
             const container = document.createElement('div');
 
             const title = document.createElement('b');
-            title.textContent = s.species_name;
+                  const link = document.createElement('a');
+                  link.href = `species.html?name=${encodeURIComponent(s.species_name)}`;
+                  link.textContent = s.species_name;
+                  link.style.textDecoration = 'none';
+                  link.style.color = 'inherit';
+                  title.appendChild(link);
+            const link = document.createElement('a');
+            link.href = `species.html?name=${encodeURIComponent(s.species_name)}`;
+            link.textContent = s.species_name;
+            link.style.textDecoration = 'none';
+            link.style.color = 'inherit';
+            title.appendChild(link);
             container.appendChild(title);
             container.appendChild(document.createElement('br'));
 
@@ -560,7 +571,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
                   const title = document.createElement('h5');
                   title.className = 'card-title';
-                  title.textContent = item.name || item.species_name;
+                  const link = document.createElement('a');
+                  link.href = `species.html?name=${encodeURIComponent(item.name || item.species_name)}`;
+                  link.textContent = item.name || item.species_name;
+                  link.style.textDecoration = 'none';
+                  link.style.color = 'inherit';
+                  title.appendChild(link);
                   body.appendChild(title);
 
                   const desc = document.createElement('p');
@@ -581,9 +597,10 @@ document.addEventListener('DOMContentLoaded', () => {
                   } else {
                       // User Data Format
                       let text = '';
+                      if (item.scientific_name) text += `<small class="text-muted">Scientific Name: ${item.scientific_name}</small><br>`;
                       if (item.description) text += `${item.description}<br>`;
                       if (item.habitat) text += `<strong>Habitat:</strong> ${item.habitat}<br>`;
-                      if (item.fun_facts) text += `<strong>Fun Fact:</strong> ${item.fun_facts}<br>`;
+                      if (item.diet) text += `<strong>Diet:</strong> ${item.diet}<br>`;
                       desc.innerHTML = text;
                   }
 
@@ -608,6 +625,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // 2. Contribute Entry
       if (contributeForm) {
+          const contributeBtn = document.querySelector('[data-bs-target="#contributeModal"]');
+          if (contributeBtn && !token) {
+              contributeBtn.style.display = 'none'; // Hide button for guests
+          }
+
           contributeForm.addEventListener('submit', async (e) => {
               e.preventDefault();
 
@@ -619,7 +641,8 @@ document.addEventListener('DOMContentLoaded', () => {
               const name = document.getElementById('contributeName').value;
               const desc = document.getElementById('contributeDesc').value;
               const habitat = document.getElementById('contributeHabitat').value;
-              const facts = document.getElementById('contributeFacts').value;
+              const scientific = document.getElementById('contributeScientific').value;
+              const diet = document.getElementById('contributeDiet').value;
               const msgEl = document.getElementById('contributeMessage');
 
               try {
@@ -633,7 +656,8 @@ document.addEventListener('DOMContentLoaded', () => {
                           species_name: name,
                           description: desc,
                           habitat: habitat,
-                          fun_facts: facts
+                          scientific_name: scientific,
+                          diet: diet
                       })
                   });
                   const data = await res.json();
@@ -749,6 +773,131 @@ document.addEventListener('DOMContentLoaded', () => {
               if (e.key === 'Enter') searchLocation();
           });
       }
+  }
+
+  // --- Page: Species Details ---
+  if (document.getElementById('speciesDetails')) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const speciesName = urlParams.get('name');
+      const speciesHeader = document.getElementById('speciesHeader');
+      const speciesContent = document.getElementById('speciesContent');
+      const speciesSightings = document.getElementById('speciesSightings');
+
+      if (!speciesName) {
+          speciesHeader.textContent = 'Species not specified';
+          speciesSightings.innerHTML = '';
+          return;
+      }
+
+      speciesHeader.textContent = speciesName;
+
+      // Fetch Details
+      // We reuse the search endpoint but filter strictly on frontend if needed,
+      // or rely on backend exact match preference.
+      // Ideally we'd have a specific /api/species/details but search is fine for hybrid.
+      async function loadDetails() {
+          try {
+              const res = await fetch(`${API_URL}/api/species_search?query=${encodeURIComponent(speciesName)}`);
+              const data = await res.json();
+
+              // Find exact match (case insensitive)
+              const match = data.find(s => (s.name || s.species_name).toLowerCase() === speciesName.toLowerCase());
+
+              if (match) {
+                  let text = '';
+                  const badge = `<span class="badge ${match.source === 'official' ? 'bg-success' : 'bg-info'} mb-2">${match.source === 'official' ? 'Official API' : 'User Contributed'}</span>`;
+
+                  if (match.source === 'official') {
+                      if (match.characteristics) {
+                          if (match.characteristics.slogan) text += `<p class="lead">"${match.characteristics.slogan}"</p>`;
+                          if (match.characteristics.habitat) text += `<p><strong>Habitat:</strong> ${match.characteristics.habitat}</p>`;
+                          if (match.characteristics.diet) text += `<p><strong>Diet:</strong> ${match.characteristics.diet}</p>`;
+                      }
+                      if (match.taxonomy) {
+                          text += `<p class="text-muted">Scientific Name: ${match.taxonomy.scientific_name}</p>`;
+                      }
+                  } else {
+                      if (match.scientific_name) text += `<p class="text-muted">Scientific Name: ${match.scientific_name}</p>`;
+                      if (match.description) text += `<p>${match.description}</p>`;
+                      if (match.habitat) text += `<p><strong>Habitat:</strong> ${match.habitat}</p>`;
+                      if (match.diet) text += `<p><strong>Diet:</strong> ${match.diet}</p>`;
+                  }
+                  speciesContent.innerHTML = badge + text;
+              } else {
+                  speciesContent.innerHTML = '<p class="text-muted">No detailed information found.</p>';
+              }
+
+          } catch(err) {
+              console.error(err);
+              speciesContent.innerHTML = '<p class="text-danger">Error loading details.</p>';
+          }
+      }
+
+      // Fetch Sightings
+      async function loadSightings() {
+          try {
+              const res = await fetch(`${API_URL}/api/sightings?species_name=${encodeURIComponent(speciesName)}`);
+              const sightings = await res.json();
+
+              speciesSightings.innerHTML = '';
+
+              if (sightings.length === 0) {
+                  speciesSightings.innerHTML = '<p class="text-muted">No reported sightings yet.</p>';
+                  return;
+              }
+
+              sightings.forEach(s => {
+                  const col = document.createElement('div');
+                  col.className = 'col-md-4 mb-3';
+
+                  const card = document.createElement('div');
+                  card.className = 'card sighting-card h-100';
+
+                  if (s.photo_url) {
+                      const img = document.createElement('img');
+                      img.src = s.photo_url;
+                      img.className = 'card-img-top';
+                      img.alt = s.species_name;
+                      card.appendChild(img);
+                  }
+
+                  const cardBody = document.createElement('div');
+                  cardBody.className = 'card-body';
+
+                  const h5 = document.createElement('h5');
+                  h5.className = 'card-title';
+                  h5.textContent = s.species_name;
+                  cardBody.appendChild(h5);
+
+                  const p = document.createElement('p');
+                  p.className = 'card-text';
+
+                  const small = document.createElement('small');
+                  small.className = 'text-muted';
+                  small.textContent = new Date(s.sighting_date).toLocaleDateString();
+                  p.appendChild(small);
+                  p.appendChild(document.createElement('br'));
+
+                  if (s.sighting_notes) {
+                      const notes = document.createElement('span');
+                      notes.textContent = s.sighting_notes;
+                      p.appendChild(notes);
+                  }
+
+                  cardBody.appendChild(p);
+                  card.appendChild(cardBody);
+                  col.appendChild(card);
+                  speciesSightings.appendChild(col);
+              });
+
+          } catch(err) {
+              console.error(err);
+              speciesSightings.innerHTML = '<p class="text-danger">Error loading sightings.</p>';
+          }
+      }
+
+      loadDetails();
+      loadSightings();
   }
 
   // --- Page: Dashboard ---

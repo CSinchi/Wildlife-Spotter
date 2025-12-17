@@ -72,7 +72,8 @@ CREATE TABLE IF NOT EXISTS species_entries (
     species_name VARCHAR(255) UNIQUE NOT NULL,
     description TEXT,
     habitat TEXT,
-    fun_facts TEXT,
+    scientific_name VARCHAR(255),
+    diet VARCHAR(255),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT fk_entry_user
