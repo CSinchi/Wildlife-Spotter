@@ -14,16 +14,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const token = localStorage.getItem('token');
   const currentPath = window.location.pathname;
   const username = localStorage.getItem('username');
+  let userRegion = localStorage.getItem('region') || 'North America'; // Default for Guest
 
   function updateNavbar() {
     if (navLinks) {
         navLinks.innerHTML = '';
         const homeLi = '<li class="nav-item"><a class="nav-link" href="index.html">Home</a></li>';
 
+        // New Wildlife Info Link
+        const infoLi = '<li class="nav-item"><a class="nav-link" href="info.html">Wildlife Info</a></li>';
+
         if (token) {
             // Logged In
             navLinks.innerHTML = `
                 ${homeLi}
+                ${infoLi}
                 <li class="nav-item"><a class="nav-link" href="new-sighting.html">New Sighting</a></li>
                 <li class="nav-item"><a class="nav-link" href="dashboard.html">${username || 'Dashboard'}</a></li>
                 <li class="nav-item"><a class="nav-link" href="#" id="logoutBtn">Logout</a></li>
@@ -34,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 e.preventDefault();
                 localStorage.removeItem('token');
                 localStorage.removeItem('username');
+                localStorage.removeItem('region'); // Clear region
                 try { await fetch(`${API_URL}/logout`, { method: 'POST' }); } catch(e) {}
                 window.location.href = 'login.html';
             });
@@ -42,6 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Logged Out
             navLinks.innerHTML = `
                 ${homeLi}
+                ${infoLi}
                 <li class="nav-item"><a class="nav-link" href="login.html">Login</a></li>
                 <li class="nav-item"><a class="nav-link" href="register.html">Register</a></li>
             `;
@@ -88,6 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (res.ok) {
           localStorage.setItem('token', data.token);
           localStorage.setItem('username', data.username);
+          if (data.region) localStorage.setItem('region', data.region); // Store region
           showMessage('Login successful!', 'success');
           setTimeout(() => { window.location.href = 'index.html'; }, 1000);
         } else {
@@ -107,12 +115,13 @@ document.addEventListener('DOMContentLoaded', () => {
       const phone = document.getElementById('phone').value;
       const email = document.getElementById('email').value;
       const password = document.getElementById('password').value;
+      const region = document.getElementById('region').value;
 
       try {
         const res = await fetch(`${API_URL}/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, phone_number: phone, email, password }),
+          body: JSON.stringify({ username, phone_number: phone, email, password, region }),
         });
         const data = await res.json();
         if (res.status === 201) {
@@ -215,7 +224,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
               if (searchType.value === 'location') {
                   try {
-                      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`);
+                      // Bounding boxes for continents (approximate)
+                      const boxes = {
+                          'North America': '-168.0,72.0,-50.0,5.0',
+                          'South America': '-90.0,15.0,-30.0,-60.0',
+                          'Europe': '-30.0,72.0,45.0,30.0',
+                          'Africa': '-20.0,38.0,55.0,-35.0',
+                          'Asia': '25.0,80.0,180.0,-10.0',
+                          'Australia': '110.0,-10.0,180.0,-50.0'
+                      };
+
+                      let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`;
+
+                      if (userRegion && boxes[userRegion]) {
+                          url += `&viewbox=${boxes[userRegion]}&bounded=1`;
+                      }
+
+                      const res = await fetch(url);
                       const data = await res.json();
                       const items = data.map(place => ({
                           label: place.display_name,
@@ -247,7 +272,22 @@ document.addEventListener('DOMContentLoaded', () => {
               if (searchType.value === 'location') {
                   // Fallback to basic search if no suggestion clicked
                   try {
-                      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
+                       // Bounding boxes for continents (approximate)
+                      const boxes = {
+                          'North America': '-168.0,72.0,-50.0,5.0',
+                          'South America': '-90.0,15.0,-30.0,-60.0',
+                          'Europe': '-30.0,72.0,45.0,30.0',
+                          'Africa': '-20.0,38.0,55.0,-35.0',
+                          'Asia': '25.0,80.0,180.0,-10.0',
+                          'Australia': '110.0,-10.0,180.0,-50.0'
+                      };
+
+                      let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`;
+                      if (userRegion && boxes[userRegion]) {
+                          url += `&viewbox=${boxes[userRegion]}&bounded=1`;
+                      }
+
+                      const res = await fetch(url);
                       const data = await res.json();
                       if (data && data.length > 0) {
                           const lat = parseFloat(data[0].lat);
@@ -360,6 +400,12 @@ document.addEventListener('DOMContentLoaded', () => {
       // Try to locate user for convenience
       mapPicker.locate({setView: true, maxZoom: 12});
 
+      // Pre-fill Region
+      const regionSelect = document.getElementById('sightingRegion');
+      if (regionSelect && userRegion) {
+          regionSelect.value = userRegion;
+      }
+
       // Species Auto-complete
       const speciesInput = document.getElementById('speciesName');
       const suggestionsBox = document.getElementById('suggestions');
@@ -416,6 +462,10 @@ document.addEventListener('DOMContentLoaded', () => {
           formData.append('sighting_date', document.getElementById('sightingDate').value);
           formData.append('sighting_notes', document.getElementById('sightingNotes').value);
 
+          // Attach selected region (override possible)
+          const region = document.getElementById('sightingRegion').value;
+          formData.append('region', region);
+
           const fileInput = document.getElementById('sightingPhoto');
           if (fileInput.files[0]) {
               formData.append('photo', fileInput.files[0]);
@@ -438,6 +488,267 @@ document.addEventListener('DOMContentLoaded', () => {
               showMessage(`Error: ${err.message}`, 'danger');
           }
       });
+  }
+
+  // --- Region Logic (Global) ---
+  const regionSelects = document.querySelectorAll('#homeRegionSelect, #pageRegionSelect, #profileRegion');
+
+  // Sync all region selects with stored value
+  regionSelects.forEach(select => {
+      if (userRegion) select.value = userRegion;
+      select.addEventListener('change', (e) => {
+          const newRegion = e.target.value;
+          userRegion = newRegion;
+
+          // Persist selection for navigation
+          localStorage.setItem('region', newRegion);
+
+          // Sync other dropdowns
+          regionSelects.forEach(s => s.value = newRegion);
+
+          // If on Info page, trigger search/refresh if needed?
+          // If on Home page, trigger map filter? (Not implemented yet)
+      });
+  });
+
+
+  // --- Page: Wildlife Info ---
+  if (document.getElementById('infoTabs')) {
+      const speciesSearchBtn = document.getElementById('speciesSearchBtn');
+      const speciesSearchInput = document.getElementById('speciesSearchInput');
+      const speciesResults = document.getElementById('speciesResults');
+      const locationSearchBtn = document.getElementById('locationSearchBtn');
+      const locationSearchInput = document.getElementById('locationSearchInput');
+      const locationResults = document.getElementById('locationResults');
+      const contributeForm = document.getElementById('contributeForm');
+
+      // 1. Species Search
+      async function searchSpecies() {
+          const query = speciesSearchInput.value.trim();
+          const region = document.getElementById('pageRegionSelect').value;
+
+          if (!query) return;
+
+          speciesResults.innerHTML = '<div class="col-12 text-center"><div class="spinner-border text-primary" role="status"></div></div>';
+
+          try {
+              const res = await fetch(`${API_URL}/api/species_search?query=${encodeURIComponent(query)}&region=${encodeURIComponent(region)}`);
+              const data = await res.json();
+
+              speciesResults.innerHTML = '';
+
+              if (data.length === 0) {
+                  speciesResults.innerHTML = '<div class="col-12 text-center"><p class="text-muted">No results found.</p></div>';
+                  return;
+              }
+
+              data.forEach(item => {
+                  const col = document.createElement('div');
+                  col.className = 'col-md-6 mb-4';
+
+                  const card = document.createElement('div');
+                  card.className = 'card h-100 result-card';
+
+                  // Badge source
+                  const badge = document.createElement('span');
+                  badge.className = `badge ${item.source === 'official' ? 'bg-success' : 'bg-info'} source-badge`;
+                  badge.textContent = item.source === 'official' ? 'Official API' : 'User Contributed';
+                  card.appendChild(badge);
+
+                  const body = document.createElement('div');
+                  body.className = 'card-body';
+
+                  const title = document.createElement('h5');
+                  title.className = 'card-title';
+                  title.textContent = item.name || item.species_name;
+                  body.appendChild(title);
+
+                  const desc = document.createElement('p');
+                  desc.className = 'card-text';
+
+                  if (item.source === 'official') {
+                      // Official Data Format
+                      let text = '';
+                      if (item.characteristics) {
+                          if (item.characteristics.slogan) text += `"${item.characteristics.slogan}"<br>`;
+                          if (item.characteristics.habitat) text += `<strong>Habitat:</strong> ${item.characteristics.habitat}<br>`;
+                          if (item.characteristics.diet) text += `<strong>Diet:</strong> ${item.characteristics.diet}<br>`;
+                      }
+                      if (item.taxonomy) {
+                          text += `<small class="text-muted">Scientific Name: ${item.taxonomy.scientific_name}</small>`;
+                      }
+                      desc.innerHTML = text;
+                  } else {
+                      // User Data Format
+                      let text = '';
+                      if (item.description) text += `${item.description}<br>`;
+                      if (item.habitat) text += `<strong>Habitat:</strong> ${item.habitat}<br>`;
+                      if (item.fun_facts) text += `<strong>Fun Fact:</strong> ${item.fun_facts}<br>`;
+                      desc.innerHTML = text;
+                  }
+
+                  body.appendChild(desc);
+                  card.appendChild(body);
+                  col.appendChild(card);
+                  speciesResults.appendChild(col);
+              });
+
+          } catch (err) {
+              console.error(err);
+              speciesResults.innerHTML = '<div class="col-12 text-danger">Error fetching results.</div>';
+          }
+      }
+
+      if (speciesSearchBtn) {
+          speciesSearchBtn.addEventListener('click', searchSpecies);
+          speciesSearchInput.addEventListener('keypress', (e) => {
+              if (e.key === 'Enter') searchSpecies();
+          });
+      }
+
+      // 2. Contribute Entry
+      if (contributeForm) {
+          contributeForm.addEventListener('submit', async (e) => {
+              e.preventDefault();
+
+              if (!token) {
+                  alert("You must be logged in to contribute.");
+                  return;
+              }
+
+              const name = document.getElementById('contributeName').value;
+              const desc = document.getElementById('contributeDesc').value;
+              const habitat = document.getElementById('contributeHabitat').value;
+              const facts = document.getElementById('contributeFacts').value;
+              const msgEl = document.getElementById('contributeMessage');
+
+              try {
+                  const res = await fetch(`${API_URL}/api/species_entries`, {
+                      method: 'POST',
+                      headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${token}`
+                      },
+                      body: JSON.stringify({
+                          species_name: name,
+                          description: desc,
+                          habitat: habitat,
+                          fun_facts: facts
+                      })
+                  });
+                  const data = await res.json();
+
+                  if (res.status === 201) {
+                       msgEl.className = 'alert alert-success';
+                       msgEl.textContent = 'Entry submitted successfully!';
+                       msgEl.style.display = 'block';
+                       contributeForm.reset();
+                       // Refresh search if query matches?
+                  } else {
+                       msgEl.className = 'alert alert-danger';
+                       msgEl.textContent = data.message || 'Error submitting entry.';
+                       msgEl.style.display = 'block';
+                  }
+              } catch (err) {
+                   msgEl.className = 'alert alert-danger';
+                   msgEl.textContent = err.message;
+                   msgEl.style.display = 'block';
+              }
+          });
+      }
+
+      // 3. Location Search
+      async function searchLocation() {
+          const query = locationSearchInput.value.trim();
+          if (!query) return;
+
+           locationResults.innerHTML = '<div class="col-12 text-center"><div class="spinner-border text-primary" role="status"></div></div>';
+
+           try {
+               const res = await fetch(`${API_URL}/api/location_info?query=${encodeURIComponent(query)}`);
+               const data = await res.json();
+
+               locationResults.innerHTML = '';
+
+               if (res.status === 404) {
+                   locationResults.innerHTML = '<div class="col-12 text-center"><p class="text-muted">Location not found.</p></div>';
+                   return;
+               }
+
+               // Handle Disambiguation
+               if (data.type === 'disambiguation') {
+                    locationResults.innerHTML = `
+                        <div class="col-md-8 text-center">
+                            <h4>Did you mean?</h4>
+                            <div class="list-group mt-3">
+                                ${data.options.map(opt => `<button class="list-group-item list-group-item-action suggestion-btn">${opt.title}</button>`).join('')}
+                            </div>
+                        </div>
+                    `;
+
+                    document.querySelectorAll('.suggestion-btn').forEach(btn => {
+                        btn.addEventListener('click', () => {
+                            locationSearchInput.value = btn.textContent;
+                            searchLocation();
+                        });
+                    });
+                    return;
+               }
+
+               const col = document.createElement('div');
+               col.className = 'col-md-8';
+
+               const card = document.createElement('div');
+               card.className = 'card';
+
+               if (data.thumbnail) {
+                   const img = document.createElement('img');
+                   img.src = data.thumbnail;
+                   img.className = 'card-img-top';
+                   img.alt = data.title;
+                   img.style.maxHeight = '400px';
+                   img.style.objectFit = 'cover';
+                   card.appendChild(img);
+               }
+
+               const body = document.createElement('div');
+               body.className = 'card-body';
+
+               const title = document.createElement('h3');
+               title.className = 'card-title';
+               title.textContent = data.title;
+               body.appendChild(title);
+
+               const text = document.createElement('p');
+               text.className = 'card-text lead';
+               text.textContent = data.extract;
+               body.appendChild(text);
+
+               if (data.page_url) {
+                   const link = document.createElement('a');
+                   link.href = data.page_url;
+                   link.target = '_blank';
+                   link.className = 'btn btn-outline-primary';
+                   link.textContent = 'Read more on Wikipedia';
+                   body.appendChild(link);
+               }
+
+               card.appendChild(body);
+               col.appendChild(card);
+               locationResults.appendChild(col);
+
+           } catch(err) {
+               console.error(err);
+               locationResults.innerHTML = '<div class="col-12 text-danger">Error fetching location data.</div>';
+           }
+      }
+
+      if (locationSearchBtn) {
+          locationSearchBtn.addEventListener('click', searchLocation);
+          locationSearchInput.addEventListener('keypress', (e) => {
+              if (e.key === 'Enter') searchLocation();
+          });
+      }
   }
 
   // --- Page: Dashboard ---
@@ -614,16 +925,24 @@ document.addEventListener('DOMContentLoaded', () => {
       // Handle Profile Update
       const profileForm = document.getElementById('profileForm');
       if (profileForm) {
+          // Pre-fill region if available (simplistic approach, ideally we fetch /me)
+          const regionSelect = document.getElementById('profileRegion');
+          if (regionSelect && userRegion) {
+              regionSelect.value = userRegion;
+          }
+
           profileForm.addEventListener('submit', async (e) => {
               e.preventDefault();
               const username = document.getElementById('profileUsername').value;
               const email = document.getElementById('profileEmail').value;
               const phone = document.getElementById('profilePhone').value;
+              const region = document.getElementById('profileRegion').value;
 
               const body = {};
               if (username) body.username = username;
               if (email) body.email = email;
               if (phone) body.phone_number = phone;
+              if (region) body.region = region;
 
               try {
                   const res = await fetch(`${API_URL}/api/user/profile`, {
@@ -636,12 +955,102 @@ document.addEventListener('DOMContentLoaded', () => {
                   });
                   const data = await res.json();
                   if (res.ok) {
+                      if (data.user && data.user.region) {
+                          localStorage.setItem('region', data.user.region); // Update local storage
+                      }
                       showMessage('Profile updated successfully!', 'success');
                   } else {
                       showMessage(`Error: ${data.message}`, 'danger');
                   }
               } catch(err) {
                   showMessage(`Error: ${err.message}`, 'danger');
+              }
+          });
+      }
+
+      // Handle Preferences
+      const preferenceForm = document.getElementById('preferenceForm');
+      const preferencesList = document.getElementById('preferencesList');
+      const prefMessage = document.getElementById('preferenceMessage');
+
+      async function loadPreferences() {
+          try {
+              const res = await fetch(`${API_URL}/api/preferences`, {
+                   headers: { 'Authorization': `Bearer ${token}` }
+              });
+              const prefs = await res.json();
+              preferencesList.innerHTML = '';
+
+              if (prefs.length === 0) {
+                  preferencesList.innerHTML = '<li class="list-group-item text-muted">No preferences saved.</li>';
+                  return;
+              }
+
+              prefs.forEach(p => {
+                  const li = document.createElement('li');
+                  li.className = 'list-group-item d-flex justify-content-between align-items-center';
+                  li.innerHTML = `
+                      <span><strong>${p.type === 'location' ? 'Park' : 'Species'}:</strong> ${p.value}</span>
+                      <button class="btn btn-sm btn-danger del-pref-btn" data-id="${p.preference_id}">Remove</button>
+                  `;
+                  preferencesList.appendChild(li);
+              });
+
+              document.querySelectorAll('.del-pref-btn').forEach(btn => {
+                  btn.addEventListener('click', async (e) => {
+                      const id = e.target.getAttribute('data-id');
+                      try {
+                          const res = await fetch(`${API_URL}/api/preferences/${id}`, {
+                              method: 'DELETE',
+                              headers: { 'Authorization': `Bearer ${token}` }
+                          });
+                          if (res.ok) {
+                              loadPreferences();
+                          }
+                      } catch (err) { console.error(err); }
+                  });
+              });
+
+          } catch(err) {
+              console.error(err);
+          }
+      }
+
+      if (preferenceForm) {
+          loadPreferences();
+
+          preferenceForm.addEventListener('submit', async (e) => {
+              e.preventDefault();
+              const type = document.getElementById('prefType').value;
+              const value = document.getElementById('prefValue').value.trim();
+
+              if (!value) return;
+
+              prefMessage.style.display = 'none';
+
+              try {
+                  const res = await fetch(`${API_URL}/api/preferences`, {
+                      method: 'POST',
+                      headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${token}`
+                      },
+                      body: JSON.stringify({ type, value })
+                  });
+                  const data = await res.json();
+
+                  if (res.status === 201) {
+                      loadPreferences();
+                      document.getElementById('prefValue').value = '';
+                  } else {
+                       prefMessage.className = 'alert alert-danger';
+                       prefMessage.textContent = data.message;
+                       prefMessage.style.display = 'block';
+                  }
+              } catch(err) {
+                   prefMessage.className = 'alert alert-danger';
+                   prefMessage.textContent = err.message;
+                   prefMessage.style.display = 'block';
               }
           });
       }

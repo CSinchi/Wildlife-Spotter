@@ -87,12 +87,49 @@
                             <label for="profilePhone" class="form-label">Phone</label>
                             <input type="text" class="form-control" id="profilePhone">
                         </div>
+                        <div class="mb-3">
+                            <label for="profileRegion" class="form-label">Region</label>
+                            <select class="form-select" id="profileRegion">
+                                <option value="North America">North America</option>
+                                <option value="South America">South America</option>
+                                <option value="Europe">Europe</option>
+                                <option value="Africa">Africa</option>
+                                <option value="Asia">Asia</option>
+                                <option value="Australia">Australia</option>
+                            </select>
+                        </div>
                         <button type="submit" class="btn btn-primary">Update Profile</button>
                     </form>
                 </div>
             </div>
         </div>
         <div class="col-md-8">
+            <div class="mb-5">
+                <h3>My Preferences</h3>
+                <div class="card">
+                    <div class="card-body">
+                        <form id="preferenceForm" class="row g-3 align-items-center mb-3">
+                            <div class="col-auto">
+                                <select class="form-select" id="prefType">
+                                    <option value="species">Species</option>
+                                    <option value="location">National Park</option>
+                                </select>
+                            </div>
+                            <div class="col-auto">
+                                <input type="text" class="form-control" id="prefValue" placeholder="Value (e.g. Bear, Yellowstone)">
+                            </div>
+                            <div class="col-auto">
+                                <button type="submit" class="btn btn-outline-primary">Add</button>
+                            </div>
+                        </form>
+                        <div id="preferenceMessage" style="display:none;" class="alert"></div>
+                        <ul class="list-group" id="preferencesList">
+                            <!-- Preferences will be loaded here -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
             <h3>My Sightings</h3>
             <div id="userSightingsList" class="row">
                 <!-- Sightings will be loaded here -->
