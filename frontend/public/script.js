@@ -345,23 +345,19 @@ document.addEventListener('DOMContentLoaded', () => {
                  renderMarkers(allSightings);
             }
 
-            // Check for specific sighting link
+            // Check for specific sighting link (One-time handling)
             const urlParams = new URLSearchParams(window.location.search);
             const sightingId = urlParams.get('sighting_id');
-            if (sightingId) {
-                // We need to fetch specific sighting if not in range?
-                // For now assuming it's in the list or we fetch specifically.
-                // Let's iterate markers after render to open popup.
-                // But markers are created in renderMarkers.
-                // Let's handle it there or via layer lookup.
-                // Actually, if it's not in the geospatial query, we won't see it.
-                // Let's fetch it specifically if needed, but simpler:
-                // Just try to find it in the current list.
+
+            // Only act if we haven't handled this ID yet or on initial load
+            // We use a property on the map object to track if we've initialised the focus
+            if (sightingId && !map._focusedSighting) {
                 const target = allSightings.find(s => s.sighting_id == sightingId);
                 if (target) {
+                    map._focusedSighting = true; // Set flag prevents loops
                     map.setView([target.latitude, target.longitude], 15);
-                    // Find marker and open. We need to map sighting_id to marker.
-                    // We'll modify renderMarkers to return map or store markers.
+                    // The actual popup opening happens in renderMarkers which checks the ID too.
+                    // But we must ensure renderMarkers knows to open it.
                 }
             }
 
@@ -846,19 +842,9 @@ document.addEventListener('DOMContentLoaded', () => {
                    const link = document.createElement('a');
                    link.href = data.page_url;
                    link.target = '_blank';
-                   link.className = 'btn btn-outline-primary me-2';
+                   link.className = 'btn btn-outline-primary';
                    link.textContent = 'Read more on Wikipedia';
                    body.appendChild(link);
-               }
-
-               // Favorite Button
-               if (token) {
-                   const isFav = userFavorites.some(f => f.type === 'location' && f.value === data.title);
-                   const favBtn = document.createElement('button');
-                   favBtn.className = isFav ? 'btn btn-outline-danger' : 'btn btn-outline-primary';
-                   favBtn.textContent = isFav ? 'Remove Favorite' : 'Add Favorite';
-                   favBtn.onclick = () => toggleFavorite('location', data.title, favBtn);
-                   body.appendChild(favBtn);
                }
 
                card.appendChild(body);
@@ -1035,6 +1021,14 @@ document.addEventListener('DOMContentLoaded', () => {
                   }
 
                   cardBody.appendChild(p);
+
+                  // View on Map
+                  const mapBtn = document.createElement('a');
+                  mapBtn.href = `index.html?sighting_id=${s.sighting_id}`;
+                  mapBtn.className = 'btn btn-info btn-sm mt-2';
+                  mapBtn.textContent = 'View on Map';
+                  cardBody.appendChild(mapBtn);
+
                   card.appendChild(cardBody);
                   col.appendChild(card);
                   speciesSightings.appendChild(col);
