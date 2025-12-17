@@ -14,16 +14,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const token = localStorage.getItem('token');
   const currentPath = window.location.pathname;
   const username = localStorage.getItem('username');
+  let userRegion = localStorage.getItem('region') || 'North America'; // Default for Guest
 
   function updateNavbar() {
     if (navLinks) {
         navLinks.innerHTML = '';
         const homeLi = '<li class="nav-item"><a class="nav-link" href="index.html">Home</a></li>';
 
+        // New Wildlife Info Link
+        const infoLi = '<li class="nav-item"><a class="nav-link" href="info.html">Wildlife Info</a></li>';
+
         if (token) {
             // Logged In
             navLinks.innerHTML = `
                 ${homeLi}
+                ${infoLi}
                 <li class="nav-item"><a class="nav-link" href="new-sighting.html">New Sighting</a></li>
                 <li class="nav-item"><a class="nav-link" href="dashboard.html">${username || 'Dashboard'}</a></li>
                 <li class="nav-item"><a class="nav-link" href="#" id="logoutBtn">Logout</a></li>
@@ -34,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 e.preventDefault();
                 localStorage.removeItem('token');
                 localStorage.removeItem('username');
+                localStorage.removeItem('region'); // Clear region
                 try { await fetch(`${API_URL}/logout`, { method: 'POST' }); } catch(e) {}
                 window.location.href = 'login.html';
             });
@@ -42,6 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Logged Out
             navLinks.innerHTML = `
                 ${homeLi}
+                ${infoLi}
                 <li class="nav-item"><a class="nav-link" href="login.html">Login</a></li>
                 <li class="nav-item"><a class="nav-link" href="register.html">Register</a></li>
             `;
@@ -88,6 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (res.ok) {
           localStorage.setItem('token', data.token);
           localStorage.setItem('username', data.username);
+          if (data.region) localStorage.setItem('region', data.region); // Store region
           showMessage('Login successful!', 'success');
           setTimeout(() => { window.location.href = 'index.html'; }, 1000);
         } else {
@@ -107,12 +115,13 @@ document.addEventListener('DOMContentLoaded', () => {
       const phone = document.getElementById('phone').value;
       const email = document.getElementById('email').value;
       const password = document.getElementById('password').value;
+      const region = document.getElementById('region').value;
 
       try {
         const res = await fetch(`${API_URL}/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, phone_number: phone, email, password }),
+          body: JSON.stringify({ username, phone_number: phone, email, password, region }),
         });
         const data = await res.json();
         if (res.status === 201) {
@@ -215,7 +224,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
               if (searchType.value === 'location') {
                   try {
-                      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`);
+                      // Bounding boxes for continents (approximate)
+                      const boxes = {
+                          'North America': '-168.0,72.0,-50.0,5.0',
+                          'South America': '-90.0,15.0,-30.0,-60.0',
+                          'Europe': '-30.0,72.0,45.0,30.0',
+                          'Africa': '-20.0,38.0,55.0,-35.0',
+                          'Asia': '25.0,80.0,180.0,-10.0',
+                          'Australia': '110.0,-10.0,180.0,-50.0'
+                      };
+
+                      let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`;
+
+                      if (userRegion && boxes[userRegion]) {
+                          url += `&viewbox=${boxes[userRegion]}&bounded=1`;
+                      }
+
+                      const res = await fetch(url);
                       const data = await res.json();
                       const items = data.map(place => ({
                           label: place.display_name,
@@ -247,7 +272,22 @@ document.addEventListener('DOMContentLoaded', () => {
               if (searchType.value === 'location') {
                   // Fallback to basic search if no suggestion clicked
                   try {
-                      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
+                       // Bounding boxes for continents (approximate)
+                      const boxes = {
+                          'North America': '-168.0,72.0,-50.0,5.0',
+                          'South America': '-90.0,15.0,-30.0,-60.0',
+                          'Europe': '-30.0,72.0,45.0,30.0',
+                          'Africa': '-20.0,38.0,55.0,-35.0',
+                          'Asia': '25.0,80.0,180.0,-10.0',
+                          'Australia': '110.0,-10.0,180.0,-50.0'
+                      };
+
+                      let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`;
+                      if (userRegion && boxes[userRegion]) {
+                          url += `&viewbox=${boxes[userRegion]}&bounded=1`;
+                      }
+
+                      const res = await fetch(url);
                       const data = await res.json();
                       if (data && data.length > 0) {
                           const lat = parseFloat(data[0].lat);
@@ -267,8 +307,18 @@ document.addEventListener('DOMContentLoaded', () => {
           });
       }
 
-      // Fetch Sightings (Initial load)
-      fetchSightings(map);
+      // Load favorites for map styling
+      let userFavorites = [];
+      async function loadMapFavorites() {
+          if (token) {
+              try {
+                  const res = await fetch(`${API_URL}/api/preferences`, { headers: { 'Authorization': `Bearer ${token}` } });
+                  userFavorites = await res.json();
+              } catch(e) {}
+          }
+          fetchSightings(map);
+      }
+      loadMapFavorites();
 
       // Re-fetch on map move to get geospatial data
       map.on('moveend', () => {
@@ -285,10 +335,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch(`${API_URL}/api/sightings?lat=${center.lat}&lon=${center.lng}&radius=${radius}`);
             const newSightings = await res.json();
 
-            // Merge or replace?
-            // For simplicity and to support search filter, let's replace `allSightings`
-            // but keep the current search filter if active?
-            // Actually, simpler: just update the "all data" and re-render.
             allSightings = newSightings;
 
             // If search is active, we should re-apply it?
@@ -299,6 +345,22 @@ document.addEventListener('DOMContentLoaded', () => {
                  renderMarkers(allSightings);
             }
 
+            // Check for specific sighting link (One-time handling)
+            const urlParams = new URLSearchParams(window.location.search);
+            const sightingId = urlParams.get('sighting_id');
+
+            // Only act if we haven't handled this ID yet or on initial load
+            // We use a property on the map object to track if we've initialised the focus
+            if (sightingId && !map._focusedSighting) {
+                const target = allSightings.find(s => s.sighting_id == sightingId);
+                if (target) {
+                    map._focusedSighting = true; // Set flag prevents loops
+                    map.setView([target.latitude, target.longitude], 15);
+                    // The actual popup opening happens in renderMarkers which checks the ID too.
+                    // But we must ensure renderMarkers knows to open it.
+                }
+            }
+
           } catch(err) {
               console.error("Error loading sightings", err);
           }
@@ -306,14 +368,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
       function renderMarkers(sightings) {
           markersLayer.clearLayers();
+          const urlParams = new URLSearchParams(window.location.search);
+          const targetId = urlParams.get('sighting_id');
+
           sightings.forEach(s => {
             const marker = L.marker([s.latitude, s.longitude]);
 
             // Create popup content safely
             const container = document.createElement('div');
 
+            // Highlight Favorite
+            const isFav = userFavorites.some(f => f.type === 'species' && f.value === s.species_name);
+            if (isFav) {
+                const badge = document.createElement('span');
+                badge.className = 'badge bg-warning text-dark mb-1';
+                badge.textContent = '★ Favorite Species';
+                container.appendChild(badge);
+                container.appendChild(document.createElement('br'));
+            }
+
             const title = document.createElement('b');
-            title.textContent = s.species_name;
+            const link = document.createElement('a');
+            link.href = `species.html?name=${encodeURIComponent(s.species_name)}`;
+            link.textContent = s.species_name;
+            link.style.textDecoration = 'none';
+            link.style.color = 'inherit';
+            title.appendChild(link);
             container.appendChild(title);
             container.appendChild(document.createElement('br'));
 
@@ -337,6 +417,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             marker.bindPopup(container);
             markersLayer.addLayer(marker);
+
+            if (targetId && s.sighting_id == targetId) {
+                marker.openPopup();
+            }
         });
       }
   }
@@ -359,6 +443,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Try to locate user for convenience
       mapPicker.locate({setView: true, maxZoom: 12});
+
+      // Pre-fill Region
+      const regionSelect = document.getElementById('sightingRegion');
+      if (regionSelect && userRegion) {
+          regionSelect.value = userRegion;
+      }
 
       // Species Auto-complete
       const speciesInput = document.getElementById('speciesName');
@@ -416,6 +506,10 @@ document.addEventListener('DOMContentLoaded', () => {
           formData.append('sighting_date', document.getElementById('sightingDate').value);
           formData.append('sighting_notes', document.getElementById('sightingNotes').value);
 
+          // Attach selected region (override possible)
+          const region = document.getElementById('sightingRegion').value;
+          formData.append('region', region);
+
           const fileInput = document.getElementById('sightingPhoto');
           if (fileInput.files[0]) {
               formData.append('photo', fileInput.files[0]);
@@ -438,6 +532,516 @@ document.addEventListener('DOMContentLoaded', () => {
               showMessage(`Error: ${err.message}`, 'danger');
           }
       });
+  }
+
+  // --- Region Logic (Global) ---
+  const regionSelects = document.querySelectorAll('#homeRegionSelect, #pageRegionSelect, #profileRegion');
+
+  // Sync all region selects with stored value
+  regionSelects.forEach(select => {
+      if (userRegion) select.value = userRegion;
+      select.addEventListener('change', (e) => {
+          const newRegion = e.target.value;
+          userRegion = newRegion;
+
+          // Persist selection for navigation
+          localStorage.setItem('region', newRegion);
+
+          // Sync other dropdowns
+          regionSelects.forEach(s => s.value = newRegion);
+
+          // If on Info page, trigger search/refresh if needed?
+          // If on Home page, trigger map filter? (Not implemented yet)
+      });
+  });
+
+
+  // --- Page: Wildlife Info ---
+  if (document.getElementById('infoTabs')) {
+      const speciesSearchBtn = document.getElementById('speciesSearchBtn');
+      const speciesSearchInput = document.getElementById('speciesSearchInput');
+      const speciesResults = document.getElementById('speciesResults');
+      const locationSearchBtn = document.getElementById('locationSearchBtn');
+      const locationSearchInput = document.getElementById('locationSearchInput');
+      const locationResults = document.getElementById('locationResults');
+      const contributeForm = document.getElementById('contributeForm');
+
+      let userFavorites = [];
+      async function fetchFavorites() {
+          if (!token) return;
+          try {
+              const res = await fetch(`${API_URL}/api/preferences`, { headers: { 'Authorization': `Bearer ${token}` } });
+              userFavorites = await res.json();
+          } catch(e) { console.error(e); }
+      }
+      fetchFavorites();
+
+      async function toggleFavorite(type, value, btn) {
+          if (!token) { alert('Please login to add favorites'); return; }
+
+          // Check if exists
+          const existing = userFavorites.find(f => f.type === type && f.value === value);
+
+          if (existing) {
+              // Remove
+              try {
+                  await fetch(`${API_URL}/api/preferences/${existing.preference_id}`, {
+                      method: 'DELETE',
+                      headers: { 'Authorization': `Bearer ${token}` }
+                  });
+                  userFavorites = userFavorites.filter(f => f.preference_id !== existing.preference_id);
+                  btn.textContent = 'Add Favorite';
+                  btn.className = 'btn btn-outline-primary btn-sm mt-2';
+              } catch(e) { alert('Error removing favorite'); }
+          } else {
+              // Add
+              try {
+                  const res = await fetch(`${API_URL}/api/preferences`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                      body: JSON.stringify({ type, value })
+                  });
+                  if (res.ok) {
+                      const newFav = await res.json();
+                      userFavorites.push(newFav);
+                      btn.textContent = 'Remove Favorite';
+                      btn.className = 'btn btn-outline-danger btn-sm mt-2';
+                  } else { alert('Error adding favorite'); }
+              } catch(e) { alert('Error adding favorite'); }
+          }
+      }
+
+      // 1. Species Search
+      async function searchSpecies() {
+          const query = speciesSearchInput.value.trim();
+          const region = document.getElementById('pageRegionSelect').value;
+
+          if (!query) return;
+
+          speciesResults.innerHTML = '<div class="col-12 text-center"><div class="spinner-border text-primary" role="status"></div></div>';
+
+          try {
+              const res = await fetch(`${API_URL}/api/species_search?query=${encodeURIComponent(query)}&region=${encodeURIComponent(region)}`);
+              const data = await res.json();
+
+              speciesResults.innerHTML = '';
+
+              if (data.length === 0) {
+                  speciesResults.innerHTML = '<div class="col-12 text-center"><p class="text-muted">No results found.</p></div>';
+                  return;
+              }
+
+              data.forEach(item => {
+                  const name = item.name || item.species_name;
+                  const col = document.createElement('div');
+                  col.className = 'col-md-6 mb-4';
+
+                  const card = document.createElement('div');
+                  card.className = 'card h-100 result-card';
+
+                  // Badge source
+                  const badge = document.createElement('span');
+                  badge.className = `badge ${item.source === 'official' ? 'bg-success' : 'bg-info'} source-badge`;
+                  badge.textContent = item.source === 'official' ? 'Official API' : 'User Contributed';
+                  card.appendChild(badge);
+
+                  const body = document.createElement('div');
+                  body.className = 'card-body';
+
+                  const title = document.createElement('h5');
+                  title.className = 'card-title';
+                  const link = document.createElement('a');
+                  link.href = `species.html?name=${encodeURIComponent(name)}`;
+                  link.textContent = name;
+                  link.style.textDecoration = 'none';
+                  link.style.color = 'inherit';
+                  title.appendChild(link);
+                  body.appendChild(title);
+
+                  const desc = document.createElement('p');
+                  desc.className = 'card-text';
+
+                  if (item.source === 'official') {
+                      // Official Data Format
+                      let text = '';
+                      if (item.characteristics) {
+                          if (item.characteristics.slogan) text += `"${item.characteristics.slogan}"<br>`;
+                          if (item.characteristics.habitat) text += `<strong>Habitat:</strong> ${item.characteristics.habitat}<br>`;
+                          if (item.characteristics.diet) text += `<strong>Diet:</strong> ${item.characteristics.diet}<br>`;
+                      }
+                      if (item.taxonomy) {
+                          text += `<small class="text-muted">Scientific Name: ${item.taxonomy.scientific_name}</small>`;
+                      }
+                      desc.innerHTML = text;
+                  } else {
+                      // User Data Format
+                      let text = '';
+                      if (item.scientific_name) text += `<small class="text-muted">Scientific Name: ${item.scientific_name}</small><br>`;
+                      if (item.description) text += `${item.description}<br>`;
+                      if (item.habitat) text += `<strong>Habitat:</strong> ${item.habitat}<br>`;
+                      if (item.diet) text += `<strong>Diet:</strong> ${item.diet}<br>`;
+                      desc.innerHTML = text;
+                  }
+
+                  body.appendChild(desc);
+
+                  // Favorite Button
+                  if (token) {
+                      const isFav = userFavorites.some(f => f.type === 'species' && f.value === name);
+                      const favBtn = document.createElement('button');
+                      favBtn.className = isFav ? 'btn btn-outline-danger btn-sm mt-2' : 'btn btn-outline-primary btn-sm mt-2';
+                      favBtn.textContent = isFav ? 'Remove Favorite' : 'Add Favorite';
+                      favBtn.onclick = () => toggleFavorite('species', name, favBtn);
+                      body.appendChild(favBtn);
+                  }
+
+                  card.appendChild(body);
+                  col.appendChild(card);
+                  speciesResults.appendChild(col);
+              });
+
+          } catch (err) {
+              console.error(err);
+              speciesResults.innerHTML = '<div class="col-12 text-danger">Error fetching results.</div>';
+          }
+      }
+
+      if (speciesSearchBtn) {
+          speciesSearchBtn.addEventListener('click', searchSpecies);
+          speciesSearchInput.addEventListener('keypress', (e) => {
+              if (e.key === 'Enter') searchSpecies();
+          });
+      }
+
+      // 2. Contribute Entry
+      if (contributeForm) {
+          const contributeBtn = document.querySelector('[data-bs-target="#contributeModal"]');
+          if (contributeBtn && !token) {
+              contributeBtn.style.display = 'none'; // Hide button for guests
+          }
+
+          contributeForm.addEventListener('submit', async (e) => {
+              e.preventDefault();
+
+              if (!token) {
+                  alert("You must be logged in to contribute.");
+                  return;
+              }
+
+              const name = document.getElementById('contributeName').value;
+              const desc = document.getElementById('contributeDesc').value;
+              const habitat = document.getElementById('contributeHabitat').value;
+              const scientific = document.getElementById('contributeScientific').value;
+              const diet = document.getElementById('contributeDiet').value;
+              const msgEl = document.getElementById('contributeMessage');
+
+              try {
+                  const res = await fetch(`${API_URL}/api/species_entries`, {
+                      method: 'POST',
+                      headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${token}`
+                      },
+                      body: JSON.stringify({
+                          species_name: name,
+                          description: desc,
+                          habitat: habitat,
+                          scientific_name: scientific,
+                          diet: diet
+                      })
+                  });
+                  const data = await res.json();
+
+                  if (res.status === 201) {
+                       msgEl.className = 'alert alert-success';
+                       msgEl.textContent = 'Entry submitted successfully!';
+                       msgEl.style.display = 'block';
+                       contributeForm.reset();
+                       // Refresh search if query matches?
+                  } else {
+                       msgEl.className = 'alert alert-danger';
+                       msgEl.textContent = data.message || 'Error submitting entry.';
+                       msgEl.style.display = 'block';
+                  }
+              } catch (err) {
+                   msgEl.className = 'alert alert-danger';
+                   msgEl.textContent = err.message;
+                   msgEl.style.display = 'block';
+              }
+          });
+      }
+
+      // 3. Location Search
+      async function searchLocation() {
+          const query = locationSearchInput.value.trim();
+          if (!query) return;
+
+           locationResults.innerHTML = '<div class="col-12 text-center"><div class="spinner-border text-primary" role="status"></div></div>';
+
+           try {
+               const res = await fetch(`${API_URL}/api/location_info?query=${encodeURIComponent(query)}`);
+               const data = await res.json();
+
+               locationResults.innerHTML = '';
+
+               if (res.status === 404) {
+                   locationResults.innerHTML = '<div class="col-12 text-center"><p class="text-muted">Location not found.</p></div>';
+                   return;
+               }
+
+               // Handle Disambiguation
+               if (data.type === 'disambiguation') {
+                    locationResults.innerHTML = `
+                        <div class="col-md-8 text-center">
+                            <h4>Did you mean?</h4>
+                            <div class="list-group mt-3">
+                                ${data.options.map(opt => `<button class="list-group-item list-group-item-action suggestion-btn">${opt.title}</button>`).join('')}
+                            </div>
+                        </div>
+                    `;
+
+                    document.querySelectorAll('.suggestion-btn').forEach(btn => {
+                        btn.addEventListener('click', () => {
+                            locationSearchInput.value = btn.textContent;
+                            searchLocation();
+                        });
+                    });
+                    return;
+               }
+
+               const col = document.createElement('div');
+               col.className = 'col-md-8';
+
+               const card = document.createElement('div');
+               card.className = 'card';
+
+               if (data.thumbnail) {
+                   const img = document.createElement('img');
+                   img.src = data.thumbnail;
+                   img.className = 'card-img-top';
+                   img.alt = data.title;
+                   img.style.maxHeight = '400px';
+                   img.style.objectFit = 'cover';
+                   card.appendChild(img);
+               }
+
+               const body = document.createElement('div');
+               body.className = 'card-body';
+
+               const title = document.createElement('h3');
+               title.className = 'card-title';
+               title.textContent = data.title;
+               body.appendChild(title);
+
+               const text = document.createElement('p');
+               text.className = 'card-text lead';
+               text.textContent = data.extract;
+               body.appendChild(text);
+
+               if (data.page_url) {
+                   const link = document.createElement('a');
+                   link.href = data.page_url;
+                   link.target = '_blank';
+                   link.className = 'btn btn-outline-primary';
+                   link.textContent = 'Read more on Wikipedia';
+                   body.appendChild(link);
+               }
+
+               card.appendChild(body);
+               col.appendChild(card);
+               locationResults.appendChild(col);
+
+           } catch(err) {
+               console.error(err);
+               locationResults.innerHTML = '<div class="col-12 text-danger">Error fetching location data.</div>';
+           }
+      }
+
+      if (locationSearchBtn) {
+          locationSearchBtn.addEventListener('click', searchLocation);
+          locationSearchInput.addEventListener('keypress', (e) => {
+              if (e.key === 'Enter') searchLocation();
+          });
+      }
+  }
+
+  // --- Page: Species Details ---
+  if (document.getElementById('speciesDetails')) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const speciesName = urlParams.get('name');
+      const speciesHeader = document.getElementById('speciesHeader');
+      const speciesContent = document.getElementById('speciesContent');
+      const speciesSightings = document.getElementById('speciesSightings');
+
+      let userFavorites = [];
+      async function fetchFavorites() {
+          if (!token) return;
+          try {
+              const res = await fetch(`${API_URL}/api/preferences`, { headers: { 'Authorization': `Bearer ${token}` } });
+              userFavorites = await res.json();
+              renderFavButton();
+          } catch(e) { console.error(e); }
+      }
+      fetchFavorites();
+
+      function renderFavButton() {
+          const container = document.getElementById('speciesDetails');
+          const oldBtn = document.getElementById('detailFavBtn');
+          if (oldBtn) oldBtn.remove();
+
+          if (token) {
+              const isFav = userFavorites.some(f => f.type === 'species' && f.value === speciesName);
+              const btn = document.createElement('button');
+              btn.id = 'detailFavBtn';
+              btn.className = isFav ? 'btn btn-outline-danger ms-3' : 'btn btn-outline-primary ms-3';
+              btn.textContent = isFav ? 'Remove Favorite' : 'Add Favorite';
+              btn.onclick = async () => {
+                  if (isFav) {
+                      const existing = userFavorites.find(f => f.type === 'species' && f.value === speciesName);
+                      if (existing) {
+                          await fetch(`${API_URL}/api/preferences/${existing.preference_id}`, {
+                              method: 'DELETE',
+                              headers: { 'Authorization': `Bearer ${token}` }
+                          });
+                          userFavorites = userFavorites.filter(f => f.preference_id !== existing.preference_id);
+                      }
+                  } else {
+                      const res = await fetch(`${API_URL}/api/preferences`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                          body: JSON.stringify({ type: 'species', value: speciesName })
+                      });
+                      if (res.ok) userFavorites.push(await res.json());
+                  }
+                  renderFavButton();
+              };
+              speciesHeader.appendChild(btn);
+          }
+      }
+
+      if (!speciesName) {
+          speciesHeader.textContent = 'Species not specified';
+          speciesSightings.innerHTML = '';
+          return;
+      }
+
+      speciesHeader.textContent = speciesName;
+
+      // Fetch Details
+      // We reuse the search endpoint but filter strictly on frontend if needed,
+      // or rely on backend exact match preference.
+      // Ideally we'd have a specific /api/species/details but search is fine for hybrid.
+      async function loadDetails() {
+          try {
+              const res = await fetch(`${API_URL}/api/species_search?query=${encodeURIComponent(speciesName)}`);
+              const data = await res.json();
+
+              // Find exact match (case insensitive)
+              const match = data.find(s => (s.name || s.species_name).toLowerCase() === speciesName.toLowerCase());
+
+              if (match) {
+                  let text = '';
+                  const badge = `<span class="badge ${match.source === 'official' ? 'bg-success' : 'bg-info'} mb-2">${match.source === 'official' ? 'Official API' : 'User Contributed'}</span>`;
+
+                  if (match.source === 'official') {
+                      if (match.characteristics) {
+                          if (match.characteristics.slogan) text += `<p class="lead">"${match.characteristics.slogan}"</p>`;
+                          if (match.characteristics.habitat) text += `<p><strong>Habitat:</strong> ${match.characteristics.habitat}</p>`;
+                          if (match.characteristics.diet) text += `<p><strong>Diet:</strong> ${match.characteristics.diet}</p>`;
+                      }
+                      if (match.taxonomy) {
+                          text += `<p class="text-muted">Scientific Name: ${match.taxonomy.scientific_name}</p>`;
+                      }
+                  } else {
+                      if (match.scientific_name) text += `<p class="text-muted">Scientific Name: ${match.scientific_name}</p>`;
+                      if (match.description) text += `<p>${match.description}</p>`;
+                      if (match.habitat) text += `<p><strong>Habitat:</strong> ${match.habitat}</p>`;
+                      if (match.diet) text += `<p><strong>Diet:</strong> ${match.diet}</p>`;
+                  }
+                  speciesContent.innerHTML = badge + text;
+              } else {
+                  speciesContent.innerHTML = '<p class="text-muted">No detailed information found.</p>';
+              }
+
+          } catch(err) {
+              console.error(err);
+              speciesContent.innerHTML = '<p class="text-danger">Error loading details.</p>';
+          }
+      }
+
+      // Fetch Sightings
+      async function loadSightings() {
+          try {
+              const res = await fetch(`${API_URL}/api/sightings?species_name=${encodeURIComponent(speciesName)}`);
+              const sightings = await res.json();
+
+              speciesSightings.innerHTML = '';
+
+              if (sightings.length === 0) {
+                  speciesSightings.innerHTML = '<p class="text-muted">No reported sightings yet.</p>';
+                  return;
+              }
+
+              sightings.forEach(s => {
+                  const col = document.createElement('div');
+                  col.className = 'col-md-4 mb-3';
+
+                  const card = document.createElement('div');
+                  card.className = 'card sighting-card h-100';
+
+                  if (s.photo_url) {
+                      const img = document.createElement('img');
+                      img.src = s.photo_url;
+                      img.className = 'card-img-top';
+                      img.alt = s.species_name;
+                      card.appendChild(img);
+                  }
+
+                  const cardBody = document.createElement('div');
+                  cardBody.className = 'card-body';
+
+                  const h5 = document.createElement('h5');
+                  h5.className = 'card-title';
+                  h5.textContent = s.species_name;
+                  cardBody.appendChild(h5);
+
+                  const p = document.createElement('p');
+                  p.className = 'card-text';
+
+                  const small = document.createElement('small');
+                  small.className = 'text-muted';
+                  small.textContent = new Date(s.sighting_date).toLocaleDateString();
+                  p.appendChild(small);
+                  p.appendChild(document.createElement('br'));
+
+                  if (s.sighting_notes) {
+                      const notes = document.createElement('span');
+                      notes.textContent = s.sighting_notes;
+                      p.appendChild(notes);
+                  }
+
+                  cardBody.appendChild(p);
+
+                  // View on Map
+                  const mapBtn = document.createElement('a');
+                  mapBtn.href = `index.html?sighting_id=${s.sighting_id}`;
+                  mapBtn.className = 'btn btn-info btn-sm mt-2';
+                  mapBtn.textContent = 'View on Map';
+                  cardBody.appendChild(mapBtn);
+
+                  card.appendChild(cardBody);
+                  col.appendChild(card);
+                  speciesSightings.appendChild(col);
+              });
+
+          } catch(err) {
+              console.error(err);
+              speciesSightings.innerHTML = '<p class="text-danger">Error loading sightings.</p>';
+          }
+      }
+
+      loadDetails();
+      loadSightings();
   }
 
   // --- Page: Dashboard ---
@@ -503,6 +1107,13 @@ document.addEventListener('DOMContentLoaded', () => {
                   }
 
                   cardBody.appendChild(p);
+
+                  // View Map Button
+                  const mapBtn = document.createElement('a');
+                  mapBtn.href = `index.html?sighting_id=${s.sighting_id}`;
+                  mapBtn.className = 'btn btn-info btn-sm me-2';
+                  mapBtn.textContent = 'View on Map';
+                  cardBody.appendChild(mapBtn);
 
                   // Delete Button
                   const delBtn = document.createElement('button');
@@ -614,16 +1225,24 @@ document.addEventListener('DOMContentLoaded', () => {
       // Handle Profile Update
       const profileForm = document.getElementById('profileForm');
       if (profileForm) {
+          // Pre-fill region if available (simplistic approach, ideally we fetch /me)
+          const regionSelect = document.getElementById('profileRegion');
+          if (regionSelect && userRegion) {
+              regionSelect.value = userRegion;
+          }
+
           profileForm.addEventListener('submit', async (e) => {
               e.preventDefault();
               const username = document.getElementById('profileUsername').value;
               const email = document.getElementById('profileEmail').value;
               const phone = document.getElementById('profilePhone').value;
+              const region = document.getElementById('profileRegion').value;
 
               const body = {};
               if (username) body.username = username;
               if (email) body.email = email;
               if (phone) body.phone_number = phone;
+              if (region) body.region = region;
 
               try {
                   const res = await fetch(`${API_URL}/api/user/profile`, {
@@ -636,12 +1255,138 @@ document.addEventListener('DOMContentLoaded', () => {
                   });
                   const data = await res.json();
                   if (res.ok) {
+                      if (data.user && data.user.region) {
+                          localStorage.setItem('region', data.user.region); // Update local storage
+                      }
                       showMessage('Profile updated successfully!', 'success');
                   } else {
                       showMessage(`Error: ${data.message}`, 'danger');
                   }
               } catch(err) {
                   showMessage(`Error: ${err.message}`, 'danger');
+              }
+          });
+      }
+
+      // Handle Preferences
+      const preferenceForm = document.getElementById('preferenceForm');
+      const preferencesList = document.getElementById('preferencesList');
+      const prefMessage = document.getElementById('preferenceMessage');
+
+      async function loadPreferences() {
+          try {
+              const res = await fetch(`${API_URL}/api/preferences`, {
+                   headers: { 'Authorization': `Bearer ${token}` }
+              });
+              const prefs = await res.json();
+              preferencesList.innerHTML = '';
+
+              if (prefs.length === 0) {
+                  preferencesList.innerHTML = '<li class="list-group-item text-muted">No preferences saved.</li>';
+                  return;
+              }
+
+              prefs.forEach(p => {
+                  const li = document.createElement('li');
+                  li.className = 'list-group-item d-flex justify-content-between align-items-center';
+                  li.innerHTML = `
+                      <span><strong>${p.type === 'location' ? 'Park' : 'Species'}:</strong> ${p.value}</span>
+                      <button class="btn btn-sm btn-danger del-pref-btn" data-id="${p.preference_id}">Remove</button>
+                  `;
+                  preferencesList.appendChild(li);
+              });
+
+              document.querySelectorAll('.del-pref-btn').forEach(btn => {
+                  btn.addEventListener('click', async (e) => {
+                      const id = e.target.getAttribute('data-id');
+                      try {
+                          const res = await fetch(`${API_URL}/api/preferences/${id}`, {
+                              method: 'DELETE',
+                              headers: { 'Authorization': `Bearer ${token}` }
+                          });
+                          if (res.ok) {
+                              loadPreferences();
+                          }
+                      } catch (err) { console.error(err); }
+                  });
+              });
+
+          } catch(err) {
+              console.error(err);
+          }
+      }
+
+      if (preferenceForm) {
+          loadPreferences();
+
+          // Autocomplete for Dashboard Form
+          const prefInput = document.getElementById('prefValue');
+          const dashSuggestions = document.getElementById('dashSuggestions');
+          let dashDebounce;
+
+          prefInput.addEventListener('input', (e) => {
+              const query = e.target.value;
+              if (query.length < 3) { dashSuggestions.style.display = 'none'; return; }
+
+              clearTimeout(dashDebounce);
+              dashDebounce = setTimeout(async () => {
+                  try {
+                      // Reuse api/species proxy
+                      const res = await fetch(`${API_URL}/api/species?name=${query}`);
+                      const animals = await res.json();
+                      dashSuggestions.innerHTML = '';
+                      if (animals.length > 0) {
+                          animals.forEach(a => {
+                              const btn = document.createElement('button');
+                              btn.className = 'list-group-item list-group-item-action';
+                              btn.textContent = a.name;
+                              btn.type = 'button'; // prevent submit
+                              btn.onclick = () => {
+                                  prefInput.value = a.name;
+                                  dashSuggestions.style.display = 'none';
+                              };
+                              dashSuggestions.appendChild(btn);
+                          });
+                          dashSuggestions.style.display = 'block';
+                      } else {
+                          dashSuggestions.style.display = 'none';
+                      }
+                  } catch(e){console.error(e);}
+              }, 300);
+          });
+
+          preferenceForm.addEventListener('submit', async (e) => {
+              e.preventDefault();
+              const type = 'species'; // Hardcoded for this form
+              const value = document.getElementById('prefValue').value.trim();
+
+              if (!value) return;
+
+              prefMessage.style.display = 'none';
+
+              try {
+                  const res = await fetch(`${API_URL}/api/preferences`, {
+                      method: 'POST',
+                      headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${token}`
+                      },
+                      body: JSON.stringify({ type, value })
+                  });
+                  const data = await res.json();
+
+                  if (res.status === 201) {
+                      loadPreferences();
+                      document.getElementById('prefValue').value = '';
+                  } else {
+                       prefMessage.className = 'alert alert-danger';
+                       prefMessage.textContent = data.message;
+                       prefMessage.style.display = 'block';
+                  }
+              } catch(err) {
+                   prefMessage.className = 'alert alert-danger';
+                   prefMessage.textContent = err.message;
+                   prefMessage.style.display = 'block';
               }
           });
       }

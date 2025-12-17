@@ -87,12 +87,45 @@
                             <label for="profilePhone" class="form-label">Phone</label>
                             <input type="text" class="form-control" id="profilePhone">
                         </div>
+                        <div class="mb-3">
+                            <label for="profileRegion" class="form-label">Region</label>
+                            <select class="form-select" id="profileRegion">
+                                <option value="North America">North America</option>
+                                <option value="South America">South America</option>
+                                <option value="Europe">Europe</option>
+                                <option value="Africa">Africa</option>
+                                <option value="Asia">Asia</option>
+                                <option value="Australia">Australia</option>
+                            </select>
+                        </div>
                         <button type="submit" class="btn btn-primary">Update Profile</button>
                     </form>
                 </div>
             </div>
         </div>
         <div class="col-md-8">
+            <div class="mb-5">
+                <h3>My Favorites</h3>
+                <div class="card">
+                    <div class="card-body">
+                        <p class="text-muted small">Add favorite species to highlight them on the map. Add Parks via the Info page.</p>
+                        <form id="preferenceForm" class="row g-3 align-items-center mb-3 position-relative">
+                            <div class="col-auto flex-grow-1">
+                                <input type="text" class="form-control" id="prefValue" placeholder="Search Species..." autocomplete="off">
+                                <div id="dashSuggestions" class="list-group position-absolute" style="z-index: 1000; width: 95%; display:none; max-height: 200px; overflow-y: auto;"></div>
+                            </div>
+                            <div class="col-auto">
+                                <button type="submit" class="btn btn-outline-primary">Add Species</button>
+                            </div>
+                        </form>
+                        <div id="preferenceMessage" style="display:none;" class="alert"></div>
+                        <ul class="list-group" id="preferencesList">
+                            <!-- Preferences will be loaded here -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
             <h3>My Sightings</h3>
             <div id="userSightingsList" class="row">
                 <!-- Sightings will be loaded here -->
