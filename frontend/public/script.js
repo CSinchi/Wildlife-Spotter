@@ -353,12 +353,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const container = document.createElement('div');
 
             const title = document.createElement('b');
-                  const link = document.createElement('a');
-                  link.href = `species.html?name=${encodeURIComponent(s.species_name)}`;
-                  link.textContent = s.species_name;
-                  link.style.textDecoration = 'none';
-                  link.style.color = 'inherit';
-                  title.appendChild(link);
             const link = document.createElement('a');
             link.href = `species.html?name=${encodeURIComponent(s.species_name)}`;
             link.textContent = s.species_name;
