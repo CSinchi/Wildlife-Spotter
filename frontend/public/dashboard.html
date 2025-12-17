@@ -105,21 +105,17 @@
         </div>
         <div class="col-md-8">
             <div class="mb-5">
-                <h3>My Preferences</h3>
+                <h3>My Favorites</h3>
                 <div class="card">
                     <div class="card-body">
-                        <form id="preferenceForm" class="row g-3 align-items-center mb-3">
-                            <div class="col-auto">
-                                <select class="form-select" id="prefType">
-                                    <option value="species">Species</option>
-                                    <option value="location">National Park</option>
-                                </select>
+                        <p class="text-muted small">Add favorite species to highlight them on the map. Add Parks via the Info page.</p>
+                        <form id="preferenceForm" class="row g-3 align-items-center mb-3 position-relative">
+                            <div class="col-auto flex-grow-1">
+                                <input type="text" class="form-control" id="prefValue" placeholder="Search Species..." autocomplete="off">
+                                <div id="dashSuggestions" class="list-group position-absolute" style="z-index: 1000; width: 95%; display:none; max-height: 200px; overflow-y: auto;"></div>
                             </div>
                             <div class="col-auto">
-                                <input type="text" class="form-control" id="prefValue" placeholder="Value (e.g. Bear, Yellowstone)">
-                            </div>
-                            <div class="col-auto">
-                                <button type="submit" class="btn btn-outline-primary">Add</button>
+                                <button type="submit" class="btn btn-outline-primary">Add Species</button>
                             </div>
                         </form>
                         <div id="preferenceMessage" style="display:none;" class="alert"></div>

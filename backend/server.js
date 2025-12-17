@@ -727,44 +727,79 @@ app.get('/api/location_info', async (req, res) => {
         const titles = openRes.data[1];
         const urls = openRes.data[3];
 
+        // Helper: Check for park keywords
+        const parkKeywords = ['National Park', 'Reserve', 'Wildlife', 'Forest', 'Sanctuary', 'Zoo', 'Safari', 'Refuge', 'Wilderness', 'Conservation', 'Monument', 'Parks'];
+        const isParkTitle = (title) => parkKeywords.some(k => title.toLowerCase().includes(k.toLowerCase()));
+
         if (!titles || titles.length === 0) {
-            // Try appending "National Park" if not present
-             if (!searchTerm.toLowerCase().includes('park') && !searchTerm.toLowerCase().includes('reserve')) {
+            // No direct results
+            // 1. Try appending "National Park"
+            if (!searchTerm.toLowerCase().includes('park')) {
                  const retryTerm = searchTerm + ' National Park';
                  const retryRes = await axios.get(`https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(retryTerm)}&limit=5&namespace=0&format=json`, { headers });
                  if (retryRes.data[1] && retryRes.data[1].length > 0) {
-                     // Found results with appended keyword
-                     // Return these as suggestions
                      return res.json({
                          type: 'disambiguation',
                          options: retryRes.data[1].map((t, i) => ({ title: t, url: retryRes.data[3][i] }))
                      });
                  }
-             }
-             return res.status(404).json({ message: 'Location not found.' });
+            }
+            // 2. Try "List of national parks in [Query]" (e.g. Kenya)
+            const listTerm = `List of national parks in ${searchTerm}`;
+            const listRes = await axios.get(`https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(listTerm)}&limit=1&namespace=0&format=json`, { headers });
+            if (listRes.data[1] && listRes.data[1].length > 0) {
+                 return res.json({
+                     type: 'disambiguation',
+                     options: [{ title: listRes.data[1][0], url: listRes.data[3][0] }]
+                 });
+            }
+
+            return res.status(404).json({ message: 'Location not found.' });
         }
 
-        // If we have an exact match or close match
-        const bestMatchTitle = titles[0];
+        // Results found. Filter strictly for parks.
+        // If titles[0] is strictly a park, use it.
+        // If not, look for a park in the list.
+        const parkMatch = titles.find(t => isParkTitle(t));
 
-        // If there are multiple similar results and the query wasn't specific, maybe return disambiguation?
-        // But for simplicity, if titles[0] is a good match, we use it.
-        // If the user typed "Yellowstone" and we got "Yellowstone National Park" as #1, use it.
-        // If we got "Yellowstone (TV Series)", we might have a problem.
-        // Let's check for keywords in the results.
+        if (parkMatch) {
+            // Found a good match.
+            // If it's not the first one, or if there are multiple, maybe disambiguate?
+            // If there's a strong match, we assume that's what the user wanted.
+            const targetTitle = parkMatch;
 
-        // Filter titles for nature-related keywords to pick the best one?
-        const natureKeywords = ['National Park', 'Reserve', 'Wildlife', 'Forest', 'Sanctuary', 'Zoo', 'Safari'];
-        const natureMatch = titles.find(t => natureKeywords.some(k => t.includes(k)));
+            // Fetch Summary
+            const summaryRes = await axios.get(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(targetTitle)}`, { headers });
+            if (summaryRes.data) {
+                 return res.json({
+                     type: 'summary',
+                     title: summaryRes.data.title,
+                     extract: summaryRes.data.extract,
+                     thumbnail: summaryRes.data.thumbnail ? summaryRes.data.thumbnail.source : null,
+                     page_url: summaryRes.data.content_urls ? summaryRes.data.content_urls.desktop.page : null
+                 });
+            }
+        } else {
+            // Results found but none look like parks (e.g. "Kenya" country page).
+            // Try "List of..." fallback
+             const listTerm = `List of national parks in ${searchTerm}`;
+             const listRes = await axios.get(`https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(listTerm)}&limit=5&namespace=0&format=json`, { headers });
+             if (listRes.data[1] && listRes.data[1].length > 0) {
+                 return res.json({
+                     type: 'disambiguation',
+                     options: listRes.data[1].map((t, i) => ({ title: t, url: listRes.data[3][i] }))
+                 });
+             }
 
-        const targetTitle = natureMatch || bestMatchTitle;
-
-        // However, if we found multiple results and the user query was ambiguous, send options.
-        if (titles.length > 1 && !natureMatch && titles[0].toLowerCase() !== query.toLowerCase()) {
-             return res.json({
-                 type: 'disambiguation',
-                 options: titles.map((t, i) => ({ title: t, url: urls[i] }))
-             });
+             // Or try appending "National Park" to original query again
+             const retryTerm = searchTerm + ' National Park';
+             const retryRes = await axios.get(`https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(retryTerm)}&limit=5&namespace=0&format=json`, { headers });
+             if (retryRes.data[1] && retryRes.data[1].length > 0) {
+                 return res.json({
+                     type: 'disambiguation',
+                     options: retryRes.data[1].map((t, i) => ({ title: t, url: retryRes.data[3][i] }))
+                 });
+             }
         }
 
         // 3. Fetch Summary for the target title

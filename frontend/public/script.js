@@ -307,8 +307,18 @@ document.addEventListener('DOMContentLoaded', () => {
           });
       }
 
-      // Fetch Sightings (Initial load)
-      fetchSightings(map);
+      // Load favorites for map styling
+      let userFavorites = [];
+      async function loadMapFavorites() {
+          if (token) {
+              try {
+                  const res = await fetch(`${API_URL}/api/preferences`, { headers: { 'Authorization': `Bearer ${token}` } });
+                  userFavorites = await res.json();
+              } catch(e) {}
+          }
+          fetchSightings(map);
+      }
+      loadMapFavorites();
 
       // Re-fetch on map move to get geospatial data
       map.on('moveend', () => {
@@ -325,10 +335,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch(`${API_URL}/api/sightings?lat=${center.lat}&lon=${center.lng}&radius=${radius}`);
             const newSightings = await res.json();
 
-            // Merge or replace?
-            // For simplicity and to support search filter, let's replace `allSightings`
-            // but keep the current search filter if active?
-            // Actually, simpler: just update the "all data" and re-render.
             allSightings = newSightings;
 
             // If search is active, we should re-apply it?
@@ -339,6 +345,26 @@ document.addEventListener('DOMContentLoaded', () => {
                  renderMarkers(allSightings);
             }
 
+            // Check for specific sighting link
+            const urlParams = new URLSearchParams(window.location.search);
+            const sightingId = urlParams.get('sighting_id');
+            if (sightingId) {
+                // We need to fetch specific sighting if not in range?
+                // For now assuming it's in the list or we fetch specifically.
+                // Let's iterate markers after render to open popup.
+                // But markers are created in renderMarkers.
+                // Let's handle it there or via layer lookup.
+                // Actually, if it's not in the geospatial query, we won't see it.
+                // Let's fetch it specifically if needed, but simpler:
+                // Just try to find it in the current list.
+                const target = allSightings.find(s => s.sighting_id == sightingId);
+                if (target) {
+                    map.setView([target.latitude, target.longitude], 15);
+                    // Find marker and open. We need to map sighting_id to marker.
+                    // We'll modify renderMarkers to return map or store markers.
+                }
+            }
+
           } catch(err) {
               console.error("Error loading sightings", err);
           }
@@ -346,11 +372,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
       function renderMarkers(sightings) {
           markersLayer.clearLayers();
+          const urlParams = new URLSearchParams(window.location.search);
+          const targetId = urlParams.get('sighting_id');
+
           sightings.forEach(s => {
             const marker = L.marker([s.latitude, s.longitude]);
 
             // Create popup content safely
             const container = document.createElement('div');
+
+            // Highlight Favorite
+            const isFav = userFavorites.some(f => f.type === 'species' && f.value === s.species_name);
+            if (isFav) {
+                const badge = document.createElement('span');
+                badge.className = 'badge bg-warning text-dark mb-1';
+                badge.textContent = '★ Favorite Species';
+                container.appendChild(badge);
+                container.appendChild(document.createElement('br'));
+            }
 
             const title = document.createElement('b');
             const link = document.createElement('a');
@@ -382,6 +421,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             marker.bindPopup(container);
             markersLayer.addLayer(marker);
+
+            if (targetId && s.sighting_id == targetId) {
+                marker.openPopup();
+            }
         });
       }
   }
@@ -527,6 +570,51 @@ document.addEventListener('DOMContentLoaded', () => {
       const locationResults = document.getElementById('locationResults');
       const contributeForm = document.getElementById('contributeForm');
 
+      let userFavorites = [];
+      async function fetchFavorites() {
+          if (!token) return;
+          try {
+              const res = await fetch(`${API_URL}/api/preferences`, { headers: { 'Authorization': `Bearer ${token}` } });
+              userFavorites = await res.json();
+          } catch(e) { console.error(e); }
+      }
+      fetchFavorites();
+
+      async function toggleFavorite(type, value, btn) {
+          if (!token) { alert('Please login to add favorites'); return; }
+
+          // Check if exists
+          const existing = userFavorites.find(f => f.type === type && f.value === value);
+
+          if (existing) {
+              // Remove
+              try {
+                  await fetch(`${API_URL}/api/preferences/${existing.preference_id}`, {
+                      method: 'DELETE',
+                      headers: { 'Authorization': `Bearer ${token}` }
+                  });
+                  userFavorites = userFavorites.filter(f => f.preference_id !== existing.preference_id);
+                  btn.textContent = 'Add Favorite';
+                  btn.className = 'btn btn-outline-primary btn-sm mt-2';
+              } catch(e) { alert('Error removing favorite'); }
+          } else {
+              // Add
+              try {
+                  const res = await fetch(`${API_URL}/api/preferences`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                      body: JSON.stringify({ type, value })
+                  });
+                  if (res.ok) {
+                      const newFav = await res.json();
+                      userFavorites.push(newFav);
+                      btn.textContent = 'Remove Favorite';
+                      btn.className = 'btn btn-outline-danger btn-sm mt-2';
+                  } else { alert('Error adding favorite'); }
+              } catch(e) { alert('Error adding favorite'); }
+          }
+      }
+
       // 1. Species Search
       async function searchSpecies() {
           const query = speciesSearchInput.value.trim();
@@ -548,6 +636,7 @@ document.addEventListener('DOMContentLoaded', () => {
               }
 
               data.forEach(item => {
+                  const name = item.name || item.species_name;
                   const col = document.createElement('div');
                   col.className = 'col-md-6 mb-4';
 
@@ -566,8 +655,8 @@ document.addEventListener('DOMContentLoaded', () => {
                   const title = document.createElement('h5');
                   title.className = 'card-title';
                   const link = document.createElement('a');
-                  link.href = `species.html?name=${encodeURIComponent(item.name || item.species_name)}`;
-                  link.textContent = item.name || item.species_name;
+                  link.href = `species.html?name=${encodeURIComponent(name)}`;
+                  link.textContent = name;
                   link.style.textDecoration = 'none';
                   link.style.color = 'inherit';
                   title.appendChild(link);
@@ -599,6 +688,17 @@ document.addEventListener('DOMContentLoaded', () => {
                   }
 
                   body.appendChild(desc);
+
+                  // Favorite Button
+                  if (token) {
+                      const isFav = userFavorites.some(f => f.type === 'species' && f.value === name);
+                      const favBtn = document.createElement('button');
+                      favBtn.className = isFav ? 'btn btn-outline-danger btn-sm mt-2' : 'btn btn-outline-primary btn-sm mt-2';
+                      favBtn.textContent = isFav ? 'Remove Favorite' : 'Add Favorite';
+                      favBtn.onclick = () => toggleFavorite('species', name, favBtn);
+                      body.appendChild(favBtn);
+                  }
+
                   card.appendChild(body);
                   col.appendChild(card);
                   speciesResults.appendChild(col);
@@ -746,9 +846,19 @@ document.addEventListener('DOMContentLoaded', () => {
                    const link = document.createElement('a');
                    link.href = data.page_url;
                    link.target = '_blank';
-                   link.className = 'btn btn-outline-primary';
+                   link.className = 'btn btn-outline-primary me-2';
                    link.textContent = 'Read more on Wikipedia';
                    body.appendChild(link);
+               }
+
+               // Favorite Button
+               if (token) {
+                   const isFav = userFavorites.some(f => f.type === 'location' && f.value === data.title);
+                   const favBtn = document.createElement('button');
+                   favBtn.className = isFav ? 'btn btn-outline-danger' : 'btn btn-outline-primary';
+                   favBtn.textContent = isFav ? 'Remove Favorite' : 'Add Favorite';
+                   favBtn.onclick = () => toggleFavorite('location', data.title, favBtn);
+                   body.appendChild(favBtn);
                }
 
                card.appendChild(body);
@@ -776,6 +886,52 @@ document.addEventListener('DOMContentLoaded', () => {
       const speciesHeader = document.getElementById('speciesHeader');
       const speciesContent = document.getElementById('speciesContent');
       const speciesSightings = document.getElementById('speciesSightings');
+
+      let userFavorites = [];
+      async function fetchFavorites() {
+          if (!token) return;
+          try {
+              const res = await fetch(`${API_URL}/api/preferences`, { headers: { 'Authorization': `Bearer ${token}` } });
+              userFavorites = await res.json();
+              renderFavButton();
+          } catch(e) { console.error(e); }
+      }
+      fetchFavorites();
+
+      function renderFavButton() {
+          const container = document.getElementById('speciesDetails');
+          const oldBtn = document.getElementById('detailFavBtn');
+          if (oldBtn) oldBtn.remove();
+
+          if (token) {
+              const isFav = userFavorites.some(f => f.type === 'species' && f.value === speciesName);
+              const btn = document.createElement('button');
+              btn.id = 'detailFavBtn';
+              btn.className = isFav ? 'btn btn-outline-danger ms-3' : 'btn btn-outline-primary ms-3';
+              btn.textContent = isFav ? 'Remove Favorite' : 'Add Favorite';
+              btn.onclick = async () => {
+                  if (isFav) {
+                      const existing = userFavorites.find(f => f.type === 'species' && f.value === speciesName);
+                      if (existing) {
+                          await fetch(`${API_URL}/api/preferences/${existing.preference_id}`, {
+                              method: 'DELETE',
+                              headers: { 'Authorization': `Bearer ${token}` }
+                          });
+                          userFavorites = userFavorites.filter(f => f.preference_id !== existing.preference_id);
+                      }
+                  } else {
+                      const res = await fetch(`${API_URL}/api/preferences`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                          body: JSON.stringify({ type: 'species', value: speciesName })
+                      });
+                      if (res.ok) userFavorites.push(await res.json());
+                  }
+                  renderFavButton();
+              };
+              speciesHeader.appendChild(btn);
+          }
+      }
 
       if (!speciesName) {
           speciesHeader.textContent = 'Species not specified';
@@ -957,6 +1113,13 @@ document.addEventListener('DOMContentLoaded', () => {
                   }
 
                   cardBody.appendChild(p);
+
+                  // View Map Button
+                  const mapBtn = document.createElement('a');
+                  mapBtn.href = `index.html?sighting_id=${s.sighting_id}`;
+                  mapBtn.className = 'btn btn-info btn-sm me-2';
+                  mapBtn.textContent = 'View on Map';
+                  cardBody.appendChild(mapBtn);
 
                   // Delete Button
                   const delBtn = document.createElement('button');
@@ -1162,9 +1325,45 @@ document.addEventListener('DOMContentLoaded', () => {
       if (preferenceForm) {
           loadPreferences();
 
+          // Autocomplete for Dashboard Form
+          const prefInput = document.getElementById('prefValue');
+          const dashSuggestions = document.getElementById('dashSuggestions');
+          let dashDebounce;
+
+          prefInput.addEventListener('input', (e) => {
+              const query = e.target.value;
+              if (query.length < 3) { dashSuggestions.style.display = 'none'; return; }
+
+              clearTimeout(dashDebounce);
+              dashDebounce = setTimeout(async () => {
+                  try {
+                      // Reuse api/species proxy
+                      const res = await fetch(`${API_URL}/api/species?name=${query}`);
+                      const animals = await res.json();
+                      dashSuggestions.innerHTML = '';
+                      if (animals.length > 0) {
+                          animals.forEach(a => {
+                              const btn = document.createElement('button');
+                              btn.className = 'list-group-item list-group-item-action';
+                              btn.textContent = a.name;
+                              btn.type = 'button'; // prevent submit
+                              btn.onclick = () => {
+                                  prefInput.value = a.name;
+                                  dashSuggestions.style.display = 'none';
+                              };
+                              dashSuggestions.appendChild(btn);
+                          });
+                          dashSuggestions.style.display = 'block';
+                      } else {
+                          dashSuggestions.style.display = 'none';
+                      }
+                  } catch(e){console.error(e);}
+              }, 300);
+          });
+
           preferenceForm.addEventListener('submit', async (e) => {
               e.preventDefault();
-              const type = document.getElementById('prefType').value;
+              const type = 'species'; // Hardcoded for this form
               const value = document.getElementById('prefValue').value.trim();
 
               if (!value) return;
