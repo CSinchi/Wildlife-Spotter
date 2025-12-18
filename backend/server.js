@@ -1,3 +1,8 @@
+// Load environment variables for local testing
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
+
 const express = require('express');
 const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
@@ -6,15 +11,17 @@ const cors = require('cors');
 const axios = require('axios');
 const multer = require('multer');
 const FormData = require('form-data');
+const serverless = require('serverless-http');
+
 const upload = multer({ storage: multer.memoryStorage() }); // Store files in memory for re-upload
 
 const app = express();
-const port = 3000;
 
 app.use(cors()); // Allow requests from our frontend
 app.use(express.json()); // Parse JSON bodies
 
 // --- Database Connection ---
+// Initialize the pool outside the handler to reuse connections on warm starts
 const pool = new Pool({
   user: process.env.DB_USER,
   host: process.env.DB_HOST,
@@ -44,8 +51,8 @@ const waitForDb = async () => {
 async function initializeDatabase() {
   if (!(await waitForDb())) {
     console.error('Could not connect to database after multiple retries.');
-    // We exit here to let Docker restart the container, which is often better than hanging
-    process.exit(1);
+    // In Lambda, exiting might just kill this invocation, throwing error is better
+    throw new Error('Database connection failed');
   }
 
   const client = await pool.connect();
@@ -162,7 +169,7 @@ async function initializeDatabase() {
 
   } catch (err) {
     console.error('Migration failed:', err);
-    // We don't exit process, but requests might fail if DB is bad.
+    throw err; // Re-throw to ensure handler knows init failed
   } finally {
     client.release();
   }
@@ -823,10 +830,17 @@ app.get('/api/location_info', async (req, res) => {
     }
 });
 
-// --- Start Server ---
-// Initialize DB then start listening
-initializeDatabase().then(() => {
-  app.listen(port, () => {
-    console.log(`Backend server listening on port ${port}`);
-  });
-});
+// --- Serverless Handler Export ---
+const serverlessHandler = serverless(app);
+
+// Global flag to track initialization across warm starts
+let dbInitialized = false;
+
+module.exports.handler = async (event, context) => {
+  if (!dbInitialized) {
+    console.log('Warm Start: Initializing Database...');
+    await initializeDatabase();
+    dbInitialized = true;
+  }
+  return serverlessHandler(event, context);
+};
