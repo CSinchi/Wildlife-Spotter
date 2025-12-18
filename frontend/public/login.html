@@ -58,8 +58,10 @@
                 <label for="mfaCode" class="form-label">Verification Code</label>
                 <input type="text" class="form-control" id="mfaCode" required placeholder="123456">
               </div>
-              <div class="d-grid">
+              <div class="d-grid gap-2">
                 <button type="submit" class="btn btn-success">Verify</button>
+                <button type="button" id="resendBtn" class="btn btn-outline-secondary" disabled>Resend Code</button>
+                <div class="text-center text-muted small" id="resendTimer"></div>
               </div>
             </form>
 

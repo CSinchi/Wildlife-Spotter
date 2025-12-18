@@ -206,9 +206,14 @@ const authenticateToken = (req, res, next) => {
 // --- Helper: Send MFA Email ---
 async function sendMFAEmail(email, code) {
     if (process.env.SENDGRID_API_KEY) {
+        const fromEmail = process.env.FROM_EMAIL;
+        if (!fromEmail) {
+            console.warn('WARNING: FROM_EMAIL environment variable is not set. SendGrid may reject the request.');
+        }
+
         const msg = {
             to: email,
-            from: process.env.FROM_EMAIL || 'test@example.com', // Must be verified sender
+            from: fromEmail || 'test@example.com', // Must be verified sender
             subject: 'Wildlife Spotter - Your Verification Code',
             text: `Your verification code is: ${code}`,
             html: `<strong>Your verification code is: ${code}</strong>`,
@@ -218,11 +223,14 @@ async function sendMFAEmail(email, code) {
             console.log(`MFA Email sent to ${email}`);
         } catch (error) {
             console.error('Error sending email:', error);
-            if (error.response) console.error(error.response.body);
+            if (error.response) {
+                console.error('SendGrid Response Body:', JSON.stringify(error.response.body, null, 2));
+            }
         }
     } else {
         // Fallback for development / no key
         console.log(`[MOCK EMAIL] To: ${email} | Code: ${code}`);
+        console.log('To send real emails, set SENDGRID_API_KEY and FROM_EMAIL environment variables.');
     }
 }
 
@@ -434,6 +442,36 @@ app.post('/verify-mfa', async (req, res) => {
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ message: 'Server error verifying MFA.' });
+    }
+});
+
+// 2b. Resend MFA Code
+app.post('/resend-mfa', async (req, res) => {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ message: 'User ID is required.' });
+
+    try {
+        const userRes = await pool.query('SELECT * FROM users WHERE user_id = $1', [userId]);
+        if (userRes.rows.length === 0) return res.status(404).json({ message: 'User not found.' });
+
+        const user = userRes.rows[0];
+
+        // Generate new code
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date(Date.now() + 10 * 60000); // 10 minutes
+
+        await pool.query(
+            'INSERT INTO mfa_codes (user_id, code, expires_at) VALUES ($1, $2, $3)',
+            [user.user_id, code, expiresAt]
+        );
+
+        await sendMFAEmail(user.email, code);
+
+        res.json({ message: 'Code resent successfully.' });
+
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ message: 'Server error resending code.' });
     }
 });
 

@@ -82,6 +82,46 @@ document.addEventListener('DOMContentLoaded', () => {
   if (loginForm) {
     let pendingUserId = null;
     const mfaForm = document.getElementById('mfaForm');
+    const resendBtn = document.getElementById('resendBtn');
+    const resendTimerEl = document.getElementById('resendTimer');
+
+    function startResendTimer() {
+        if (!resendBtn) return;
+        resendBtn.disabled = true;
+        let timeLeft = 20;
+        resendTimerEl.textContent = `Resend available in ${timeLeft}s`;
+
+        const interval = setInterval(() => {
+            timeLeft--;
+            if (timeLeft <= 0) {
+                clearInterval(interval);
+                resendBtn.disabled = false;
+                resendTimerEl.textContent = '';
+            } else {
+                resendTimerEl.textContent = `Resend available in ${timeLeft}s`;
+            }
+        }, 1000);
+    }
+
+    if (resendBtn) {
+        resendBtn.addEventListener('click', async () => {
+            if (!pendingUserId) return;
+            try {
+                const res = await fetch(`${API_URL}/resend-mfa`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId: pendingUserId })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showMessage('Code resent successfully', 'info');
+                    startResendTimer();
+                } else {
+                    showMessage(`Error: ${data.message}`, 'danger');
+                }
+            } catch (err) { console.error(err); }
+        });
+    }
 
     loginForm.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -102,6 +142,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 loginForm.style.display = 'none';
                 mfaForm.style.display = 'block';
                 showMessage(data.message, 'info');
+                startResendTimer();
                 return;
             }
 
