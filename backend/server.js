@@ -6,11 +6,12 @@ const cors = require('cors');
 const axios = require('axios');
 const multer = require('multer');
 const FormData = require('form-data');
-const sgMail = require('@sendgrid/mail');
+const { Resend } = require('resend');
 const upload = multer({ storage: multer.memoryStorage() }); // Store files in memory for re-upload
 
-if (process.env.SENDGRID_API_KEY) {
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+let resend;
+if (process.env.RESEND_API_KEY) {
+    resend = new Resend(process.env.RESEND_API_KEY);
 }
 
 const app = express();
@@ -205,32 +206,22 @@ const authenticateToken = (req, res, next) => {
 
 // --- Helper: Send MFA Email ---
 async function sendMFAEmail(email, code) {
-    if (process.env.SENDGRID_API_KEY) {
-        const fromEmail = process.env.FROM_EMAIL;
-        if (!fromEmail) {
-            console.warn('WARNING: FROM_EMAIL environment variable is not set. SendGrid may reject the request.');
-        }
-
-        const msg = {
-            to: email,
-            from: fromEmail || 'test@example.com', // Must be verified sender
-            subject: 'Wildlife Spotter - Your Verification Code',
-            text: `Your verification code is: ${code}`,
-            html: `<strong>Your verification code is: ${code}</strong>`,
-        };
+    if (resend) {
         try {
-            await sgMail.send(msg);
-            console.log(`MFA Email sent to ${email}`);
+            const data = await resend.emails.send({
+                from: 'onboarding@resend.dev',
+                to: email,
+                subject: 'Wildlife Spotter - Your Verification Code',
+                html: `<strong>Your verification code is: ${code}</strong>`
+            });
+            console.log(`MFA Email sent to ${email}`, data);
         } catch (error) {
             console.error('Error sending email:', error);
-            if (error.response) {
-                console.error('SendGrid Response Body:', JSON.stringify(error.response.body, null, 2));
-            }
         }
     } else {
         // Fallback for development / no key
         console.log(`[MOCK EMAIL] To: ${email} | Code: ${code}`);
-        console.log('To send real emails, set SENDGRID_API_KEY and FROM_EMAIL environment variables.');
+        console.log('To send real emails, set RESEND_API_KEY environment variable.');
     }
 }
 
