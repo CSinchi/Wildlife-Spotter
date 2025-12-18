@@ -1,0 +1,10 @@
+
+> backend@1.0.0 start
+> node server.js
+
+Database not ready, retrying in 5s... (5 left)
+Database not ready, retrying in 5s... (4 left)
+Database not ready, retrying in 5s... (3 left)
+Database not ready, retrying in 5s... (2 left)
+Database not ready, retrying in 5s... (1 left)
+Could not connect to database after multiple retries.
