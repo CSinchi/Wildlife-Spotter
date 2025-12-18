@@ -1,0 +1,42 @@
+service: wildlife-backend
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-east-1
+  memorySize: 256
+  timeout: 10 # Increased timeout for potential cold start DB connections
+  environment:
+    DB_HOST: ${env:DB_HOST, 'db-proxy-url-placeholder'}
+    DB_USER: ${env:DB_USER, 'myuser'}
+    DB_PASSWORD: ${env:DB_PASSWORD, 'mypassword'}
+    DB_NAME: ${env:DB_NAME, 'mydb'}
+    JWT_SECRET: ${env:JWT_SECRET, 'your_super_secret_key'}
+    API_NINJAS_KEY: ${env:API_NINJAS_KEY}
+    IMGBB_KEY: ${env:IMGBB_KEY}
+
+  # VPC Configuration (Uncomment and fill in for Phase 3 deployment)
+  # vpc:
+  #   securityGroupIds:
+  #     - sg-xxxxxxxxxxxxxxxxx
+  #   subnetIds:
+  #     - subnet-xxxxxxxxxxxxxxxxx
+  #     - subnet-xxxxxxxxxxxxxxxxx
+
+functions:
+  api:
+    handler: server.handler
+    events:
+      - http:
+          path: /
+          method: ANY
+      - http:
+          path: /{proxy+}
+          method: ANY
+
+plugins:
+  - serverless-offline
+
+useDotenv: true
