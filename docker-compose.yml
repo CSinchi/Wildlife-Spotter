@@ -27,6 +27,7 @@ services:
       - JWT_SECRET=your_super_secret_key_change_me
       - API_NINJAS_KEY=r5MbX8lQzNhJnhHuh+3S4A==9mmag4bQW8Zmesl1
       - IMGBB_KEY=42f7b91c1bbf6326005d55c2873332d3
+      - RESEND_API_KEY=re_5efvvEgs_CxsorBpBS8VHRAHc8dxjEtY1
     depends_on:
       - db
 

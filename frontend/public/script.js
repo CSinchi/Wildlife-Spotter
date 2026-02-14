@@ -80,6 +80,49 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Handle Login ---
   if (loginForm) {
+    let pendingUserId = null;
+    const mfaForm = document.getElementById('mfaForm');
+    const resendBtn = document.getElementById('resendBtn');
+    const resendTimerEl = document.getElementById('resendTimer');
+
+    function startResendTimer() {
+        if (!resendBtn) return;
+        resendBtn.disabled = true;
+        let timeLeft = 20;
+        resendTimerEl.textContent = `Resend available in ${timeLeft}s`;
+
+        const interval = setInterval(() => {
+            timeLeft--;
+            if (timeLeft <= 0) {
+                clearInterval(interval);
+                resendBtn.disabled = false;
+                resendTimerEl.textContent = '';
+            } else {
+                resendTimerEl.textContent = `Resend available in ${timeLeft}s`;
+            }
+        }, 1000);
+    }
+
+    if (resendBtn) {
+        resendBtn.addEventListener('click', async () => {
+            if (!pendingUserId) return;
+            try {
+                const res = await fetch(`${API_URL}/resend-mfa`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId: pendingUserId })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showMessage('Code resent successfully', 'info');
+                    startResendTimer();
+                } else {
+                    showMessage(`Error: ${data.message}`, 'danger');
+                }
+            } catch (err) { console.error(err); }
+        });
+    }
+
     loginForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const email = document.getElementById('email').value;
@@ -93,11 +136,22 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         const data = await res.json();
         if (res.ok) {
-          localStorage.setItem('token', data.token);
-          localStorage.setItem('username', data.username);
-          if (data.region) localStorage.setItem('region', data.region); // Store region
-          showMessage('Login successful!', 'success');
-          setTimeout(() => { window.location.href = 'index.html'; }, 1000);
+            // Check for MFA Requirement
+            if (data.mfa_required) {
+                pendingUserId = data.userId;
+                loginForm.style.display = 'none';
+                mfaForm.style.display = 'block';
+                showMessage(data.message, 'info');
+                startResendTimer();
+                return;
+            }
+
+            // Standard Login Success
+            localStorage.setItem('token', data.token);
+            localStorage.setItem('username', data.username);
+            if (data.region) localStorage.setItem('region', data.region);
+            showMessage('Login successful!', 'success');
+            setTimeout(() => { window.location.href = 'index.html'; }, 1000);
         } else {
           showMessage(`Error: ${data.message}`, 'danger');
         }
@@ -105,6 +159,35 @@ document.addEventListener('DOMContentLoaded', () => {
         showMessage(`Error: ${err.message}`, 'danger');
       }
     });
+
+    if (mfaForm) {
+        mfaForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const code = document.getElementById('mfaCode').value;
+            if (!pendingUserId) return;
+
+            try {
+                const res = await fetch(`${API_URL}/verify-mfa`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId: pendingUserId, code })
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    localStorage.setItem('token', data.token);
+                    localStorage.setItem('username', data.username);
+                    if (data.region) localStorage.setItem('region', data.region);
+                    showMessage('Verification successful!', 'success');
+                    setTimeout(() => { window.location.href = 'index.html'; }, 1000);
+                } else {
+                    showMessage(`Error: ${data.message}`, 'danger');
+                }
+            } catch (err) {
+                 showMessage(`Error: ${err.message}`, 'danger');
+            }
+        });
+    }
   }
 
   // --- Handle Registration ---
@@ -1225,11 +1308,23 @@ document.addEventListener('DOMContentLoaded', () => {
       // Handle Profile Update
       const profileForm = document.getElementById('profileForm');
       if (profileForm) {
-          // Pre-fill region if available (simplistic approach, ideally we fetch /me)
-          const regionSelect = document.getElementById('profileRegion');
-          if (regionSelect && userRegion) {
-              regionSelect.value = userRegion;
+          // Fetch Profile Data
+          async function loadProfileData() {
+              try {
+                  const res = await fetch(`${API_URL}/api/user/profile`, {
+                      headers: { 'Authorization': `Bearer ${token}` }
+                  });
+                  if (res.ok) {
+                      const user = await res.json();
+                      document.getElementById('profileUsername').value = user.username || '';
+                      document.getElementById('profileEmail').value = user.email || '';
+                      document.getElementById('profilePhone').value = user.phone_number || '';
+                      if (user.region) document.getElementById('profileRegion').value = user.region;
+                      if (user.mfa_enabled !== undefined) document.getElementById('profileMfa').checked = user.mfa_enabled;
+                  }
+              } catch (e) { console.error('Error loading profile', e); }
           }
+          loadProfileData();
 
           profileForm.addEventListener('submit', async (e) => {
               e.preventDefault();
@@ -1237,12 +1332,14 @@ document.addEventListener('DOMContentLoaded', () => {
               const email = document.getElementById('profileEmail').value;
               const phone = document.getElementById('profilePhone').value;
               const region = document.getElementById('profileRegion').value;
+              const mfaEnabled = document.getElementById('profileMfa').checked;
 
               const body = {};
               if (username) body.username = username;
               if (email) body.email = email;
               if (phone) body.phone_number = phone;
               if (region) body.region = region;
+              body.mfa_enabled = mfaEnabled;
 
               try {
                   const res = await fetch(`${API_URL}/api/user/profile`, {

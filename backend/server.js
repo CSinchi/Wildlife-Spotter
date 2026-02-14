@@ -6,7 +6,13 @@ const cors = require('cors');
 const axios = require('axios');
 const multer = require('multer');
 const FormData = require('form-data');
+const { Resend } = require('resend');
 const upload = multer({ storage: multer.memoryStorage() }); // Store files in memory for re-upload
+
+let resend;
+if (process.env.RESEND_API_KEY) {
+    resend = new Resend(process.env.RESEND_API_KEY);
+}
 
 const app = express();
 const port = 3000;
@@ -86,6 +92,9 @@ async function initializeDatabase() {
     // Ensure 'region' exists
     await checkColumn('users', 'region', 'VARCHAR(50) DEFAULT \'North America\'');
 
+    // Ensure 'mfa_enabled' exists
+    await checkColumn('users', 'mfa_enabled', 'BOOLEAN DEFAULT FALSE');
+
     // Ensure 'login_tokens' table exists
     // We do this AFTER ensuring users.user_id exists, because of the foreign key
     await client.query(`
@@ -156,7 +165,18 @@ async function initializeDatabase() {
     // Ensure columns exist (if table already existed)
     await checkColumn('species_entries', 'scientific_name', 'VARCHAR(255)');
     await checkColumn('species_entries', 'diet', 'VARCHAR(255)');
-    // We don't remove fun_facts column to avoid data loss, but we won't use it.
+
+    // Ensure 'mfa_codes' table exists
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS mfa_codes (
+        code_id SERIAL PRIMARY KEY,
+        user_id INT NOT NULL,
+        code VARCHAR(6) NOT NULL,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_mfa_user FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      );
+    `);
 
     console.log('Database migrations completed successfully.');
 
@@ -183,6 +203,27 @@ const authenticateToken = (req, res, next) => {
     next();
   });
 };
+
+// --- Helper: Send MFA Email ---
+async function sendMFAEmail(email, code) {
+    if (resend) {
+        try {
+            const data = await resend.emails.send({
+                from: 'onboarding@resend.dev',
+                to: email,
+                subject: 'Wildlife Spotter - Your Verification Code',
+                html: `<strong>Your verification code is: ${code}</strong>`
+            });
+            console.log(`MFA Email sent to ${email}`, data);
+        } catch (error) {
+            console.error('Error sending email:', error);
+        }
+    } else {
+        // Fallback for development / no key
+        console.log(`[MOCK EMAIL] To: ${email} | Code: ${code}`);
+        console.log('To send real emails, set RESEND_API_KEY environment variable.');
+    }
+}
 
 // --- Helper: Upload Image to ImgBB ---
 async function uploadToImgBB(buffer) {
@@ -309,7 +350,25 @@ app.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Create a JSON Web Token (JWT)
+    // Check if MFA is enabled
+    if (user.mfa_enabled) {
+        // Generate 6-digit code
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date(Date.now() + 10 * 60000); // 10 minutes
+
+        // Store code
+        await pool.query(
+            'INSERT INTO mfa_codes (user_id, code, expires_at) VALUES ($1, $2, $3)',
+            [user.user_id, code, expiresAt]
+        );
+
+        // Send Email
+        await sendMFAEmail(user.email, code);
+
+        return res.json({ mfa_required: true, userId: user.user_id, message: 'Verification code sent to email.' });
+    }
+
+    // Standard Login (No MFA)
     const token = jwt.sign(
       { userId: user.user_id, email: user.email },
       process.env.JWT_SECRET,
@@ -328,6 +387,83 @@ app.post('/login', async (req, res) => {
     console.error(err.message);
     res.status(500).json({ message: 'Server error' });
   }
+});
+
+// 2a. Verify MFA Code
+app.post('/verify-mfa', async (req, res) => {
+    const { userId, code } = req.body;
+
+    if (!userId || !code) {
+        return res.status(400).json({ message: 'User ID and Code are required.' });
+    }
+
+    try {
+        // Fetch valid code
+        const codeRes = await pool.query(
+            'SELECT * FROM mfa_codes WHERE user_id = $1 AND code = $2 AND expires_at > NOW()',
+            [userId, code]
+        );
+
+        if (codeRes.rows.length === 0) {
+            return res.status(400).json({ message: 'Invalid or expired code.' });
+        }
+
+        // Code is valid, now login
+        const userRes = await pool.query('SELECT * FROM users WHERE user_id = $1', [userId]);
+        const user = userRes.rows[0];
+
+        // Generate Token
+        const token = jwt.sign(
+            { userId: user.user_id, email: user.email },
+            process.env.JWT_SECRET,
+            { expiresIn: '1h' }
+        );
+
+        // Store token
+        await pool.query(
+            'INSERT INTO login_tokens (user_id, token) VALUES ($1, $2)',
+            [user.user_id, token]
+        );
+
+        // Delete used code (and any old ones for cleanliness)
+        await pool.query('DELETE FROM mfa_codes WHERE user_id = $1', [userId]);
+
+        res.json({ message: 'Login successful', token: token, username: user.username, region: user.region || 'North America' });
+
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ message: 'Server error verifying MFA.' });
+    }
+});
+
+// 2b. Resend MFA Code
+app.post('/resend-mfa', async (req, res) => {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ message: 'User ID is required.' });
+
+    try {
+        const userRes = await pool.query('SELECT * FROM users WHERE user_id = $1', [userId]);
+        if (userRes.rows.length === 0) return res.status(404).json({ message: 'User not found.' });
+
+        const user = userRes.rows[0];
+
+        // Generate new code
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date(Date.now() + 10 * 60000); // 10 minutes
+
+        await pool.query(
+            'INSERT INTO mfa_codes (user_id, code, expires_at) VALUES ($1, $2, $3)',
+            [user.user_id, code, expiresAt]
+        );
+
+        await sendMFAEmail(user.email, code);
+
+        res.json({ message: 'Code resent successfully.' });
+
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ message: 'Server error resending code.' });
+    }
 });
 
 // 3. Logout
@@ -501,9 +637,23 @@ app.put('/api/sightings/:id', authenticateToken, async (req, res) => {
     }
 });
 
-// 8. Update User Profile
+// 8a. Get User Profile
+app.get('/api/user/profile', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT user_id, username, email, phone_number, region, mfa_enabled FROM users WHERE user_id = $1', [req.user.userId]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ message: 'Server error fetching profile.' });
+    }
+});
+
+// 8b. Update User Profile
 app.put('/api/user/profile', authenticateToken, async (req, res) => {
-    const { username, email, phone_number, region } = req.body;
+    const { username, email, phone_number, region, mfa_enabled } = req.body;
 
     // Construct dynamic update query
     let fields = [];
@@ -514,13 +664,14 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
     if (email) { fields.push(`email = $${idx++}`); values.push(email); }
     if (phone_number) { fields.push(`phone_number = $${idx++}`); values.push(phone_number); }
     if (region) { fields.push(`region = $${idx++}`); values.push(region); }
+    if (typeof mfa_enabled !== 'undefined') { fields.push(`mfa_enabled = $${idx++}`); values.push(mfa_enabled); }
 
     if (fields.length === 0) {
         return res.status(400).json({ message: 'No fields provided for update.' });
     }
 
     values.push(req.user.userId);
-    const query = `UPDATE users SET ${fields.join(', ')} WHERE user_id = $${idx} RETURNING user_id, username, email, phone_number, region`;
+    const query = `UPDATE users SET ${fields.join(', ')} WHERE user_id = $${idx} RETURNING user_id, username, email, phone_number, region, mfa_enabled`;
 
     try {
         const result = await pool.query(query, values);
